@@ -35,6 +35,7 @@ def test_database():
         db = Database(db_path)
         
         # Test state operations
+        print("  Testing state storage...")
         db.set_state(
             "channel1",
             "members/alice",
@@ -43,13 +44,14 @@ def test_database():
             updated_by="admin",
             updated_at=12345
         )
-        
+
         state = db.get_state("channel1", "members/alice")
         assert state is not None
         assert state["data"]["public_key"] == "alice_key"
         print("✓ State storage works")
         
         # Test message operations
+        print("  Testing message storage...")
         db.add_message(
             channel_id="channel1",
             topic_id="general",
@@ -67,11 +69,13 @@ def test_database():
         print("✓ Message storage works")
         
         # Test chain head
+        print("  Testing chain head tracking...")
         head = db.get_chain_head("channel1", "general")
         assert head["message_hash"] == "hash1"
         print("✓ Chain head tracking works")
         
         # Test message queries with time filters (milliseconds)
+        print("  Testing time-based queries...")
         messages = db.get_messages("channel1", "general", from_ts=12340000, to_ts=12350000)
         assert len(messages) == 1
         print("✓ Time-based queries work")
@@ -89,6 +93,7 @@ def test_crypto():
     crypto = CryptoUtils()
     
     # Generate keypair
+    print("  Testing signature verification...")
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
     
@@ -104,10 +109,12 @@ def test_crypto():
     print("✓ Signature verification works")
     
     # Test with wrong message
+    print("  Testing invalid signature rejection...")
     assert not crypto.verify_signature(b"Wrong message", signature, public_key_bytes)
     print("✓ Invalid signature rejected")
     
     # Test base64 encoding/decoding
+    print("  Testing base64 encoding...")
     data = b"test data"
     encoded = crypto.base64_encode(data)
     decoded = crypto.base64_decode(encoded)
@@ -115,6 +122,7 @@ def test_crypto():
     print("✓ Base64 encoding works")
     
     # Test message hash computation (now includes sender and returns typed ID)
+    print("  Testing message hashing...")
     sender_id = encode_user_id(public_key_bytes)
     msg_hash = crypto.compute_message_hash(
         "channel1",
@@ -128,6 +136,7 @@ def test_crypto():
     print("✓ Message hashing works")
 
     # Test message signature verification
+    print("  Testing message signature verification...")
     # Sign the full typed identifier bytes
     msg_tid = decode_identifier(msg_hash)
     msg_signature = private_key.sign(msg_tid.to_bytes())
@@ -161,12 +170,14 @@ def test_authorization():
         user_id = encode_user_id(user_public_bytes)
 
         channel_id = encode_channel_id(admin_public_bytes)  # Admin is channel creator
-        
+
         # Test channel creator has god mode
+        print("  Testing channel creator god mode...")
         assert authz.check_permission(channel_id, admin_id, "write", "anything")
         print("✓ Channel creator has god mode")
 
         # Create a capability for user
+        print("  Testing granted capability...")
         capability = {
             "op": "read",
             "path": "*",
@@ -200,16 +211,19 @@ def test_authorization():
         print("✓ User has granted capability")
 
         # Test user doesn't have write permission
+        print("  Testing ungranted capability rejection...")
         assert not authz.check_permission(channel_id, user_id, "write", "members/alice")
         print("✓ User doesn't have ungranted capability")
         
         # Test path matching
+        print("  Testing path matching...")
         assert authz._path_matches("*", "members")
         assert authz._path_matches("members/", "members/alice")
         assert not authz._path_matches("members/alice", "members/bob")
         print("✓ Path matching works")
 
         # Test capability subset checking
+        print("  Testing capability subset checking...")
         granter_caps = [
             {"op": "write", "path": "*"}
         ]
@@ -220,6 +234,7 @@ def test_authorization():
         print("✓ Capability subset checking works")
         
         # Test privilege escalation prevention
+        print("  Testing privilege escalation prevention...")
         requested_caps = [
             {"op": "write", "path": "*"}
         ]
@@ -252,15 +267,18 @@ def test_blob_storage():
         fs_manager = FilesystemBlobManager(blob_dir)
 
         # Test successful upload
+        print("  Testing blob upload...")
         fs_manager.add_blob(blob_id, blob_data)
         print("  ✓ Blob upload works")
 
         # Test retrieval
+        print("  Testing blob retrieval...")
         retrieved = fs_manager.get_blob(blob_id)
         assert retrieved == blob_data
         print("  ✓ Blob retrieval works")
 
         # Test duplicate upload (should raise FileExistsError)
+        print("  Testing duplicate blob rejection...")
         try:
             fs_manager.add_blob(blob_id, blob_data)
             assert False, "Should have raised FileExistsError"
@@ -268,6 +286,7 @@ def test_blob_storage():
             print("  ✓ Duplicate blob rejected")
 
         # Test invalid blob_id (wrong type)
+        print("  Testing invalid blob_id rejection...")
         try:
             invalid_id = encode_user_id(b"x" * 32)  # USER type instead of BLOB
             fs_manager.add_blob(invalid_id, blob_data)
@@ -277,16 +296,19 @@ def test_blob_storage():
             print("  ✓ Invalid blob_id rejected")
 
         # Test retrieval of non-existent blob
+        print("  Testing non-existent blob retrieval...")
         non_existent_id = crypto.compute_blob_id(b"different content")
         assert fs_manager.get_blob(non_existent_id) is None
         print("  ✓ Non-existent blob returns None")
 
         # Test deletion
+        print("  Testing blob deletion...")
         assert fs_manager.delete_blob(blob_id) == True
         assert fs_manager.get_blob(blob_id) is None
         print("  ✓ Blob deletion works")
 
         # Test deleting non-existent blob
+        print("  Testing non-existent blob deletion...")
         assert fs_manager.delete_blob(blob_id) == False
         print("  ✓ Deleting non-existent blob returns False")
 
@@ -303,20 +325,24 @@ def test_blob_storage():
         db_manager = DatabaseBlobManager(db)
 
         # Test successful upload
+        print("  Testing database blob upload...")
         db_manager.add_blob(blob_id, blob_data)
         print("  ✓ Database blob upload works")
 
         # Test retrieval
+        print("  Testing database blob retrieval...")
         retrieved = db_manager.get_blob(blob_id)
         assert retrieved == blob_data
         print("  ✓ Database blob retrieval works")
 
         # Test deletion
+        print("  Testing database blob deletion...")
         assert db_manager.delete_blob(blob_id) == True
         assert db_manager.get_blob(blob_id) is None
         print("  ✓ Database blob deletion works")
 
         # Test deleting non-existent blob
+        print("  Testing database non-existent blob deletion...")
         assert db_manager.delete_blob(blob_id) == False
         print("  ✓ Database: Deleting non-existent blob returns False")
 
@@ -339,6 +365,7 @@ def test_integration():
         authz = AuthorizationEngine(db, crypto)
         
         # Setup: Create channel and admin
+        print("  Setting up channel and admin...")
         admin_private = ed25519.Ed25519PrivateKey.generate()
         admin_public = admin_private.public_key()
         admin_public_bytes = admin_public.public_bytes_raw()
@@ -381,6 +408,7 @@ def test_integration():
         )
 
         # Create and add a new user
+        print("  Testing admin adding new member...")
         user_private = ed25519.Ed25519PrivateKey.generate()
         user_public = user_private.public_key()
         user_public_bytes = user_public.public_bytes_raw()
@@ -404,6 +432,7 @@ def test_integration():
         print("✓ Admin can add new member")
 
         # Grant user post capability
+        print("  Testing user posting message...")
         post_cap = {
             "op": "create",
             "path": "topics/*/messages/",
@@ -449,10 +478,12 @@ def test_integration():
         print("✓ User can post message with granted capability")
 
         # Verify user can't write to admin areas
+        print("  Testing unauthorized access prevention...")
         assert not authz.check_permission(channel_id, user_id, "write", "members/someone_else/rights/")
         print("✓ User can't access unauthorized areas")
 
         # Retrieve and verify message
+        print("  Testing message retrieval...")
         messages = db.get_messages(channel_id, "general-chat")
         assert len(messages) == 1
         assert messages[0]["message_hash"] == msg_hash
