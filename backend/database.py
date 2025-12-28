@@ -1,5 +1,8 @@
 """
 Database layer for E2EE messaging system using SQLite
+
+Note: This class now only handles messages. State operations have been
+moved to StateManager implementations (see state_manager.py).
 """
 
 import sqlite3
@@ -9,12 +12,12 @@ from contextlib import contextmanager
 
 
 class Database:
-    """SQLite database for storing messages, state, and blobs"""
-    
+    """SQLite database for storing messages"""
+
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._init_db()
-    
+
     @contextmanager
     def get_connection(self):
         """Context manager for database connections"""
@@ -28,31 +31,12 @@ class Database:
             raise
         finally:
             conn.close()
-    
+
     def _init_db(self):
         """Initialize database schema"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
-            # State table - stores all channel state (members, capabilities, metadata)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS state (
-                    channel_id TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    data TEXT NOT NULL,
-                    encrypted BOOLEAN NOT NULL,
-                    updated_by TEXT NOT NULL,
-                    updated_at INTEGER NOT NULL,
-                    PRIMARY KEY (channel_id, path)
-                )
-            """)
-            
-            # Create index for faster state queries
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_state_channel 
-                ON state(channel_id)
-            """)
-            
+
             # Messages table - blockchain-style message chains
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
@@ -66,125 +50,20 @@ class Database:
                     server_timestamp INTEGER NOT NULL
                 )
             """)
-            
+
             # Create indexes for message queries
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_messages_topic 
+                CREATE INDEX IF NOT EXISTS idx_messages_topic
                 ON messages(channel_id, topic_id, server_timestamp)
             """)
-            
+
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_messages_timestamp
                 ON messages(channel_id, topic_id, server_timestamp DESC)
             """)
 
             conn.commit()
-    
-    # ========================================================================
-    # State Operations
-    # ========================================================================
-    
-    def get_state(
-        self,
-        channel_id: str,
-        path: str
-    ) -> Optional[Dict[str, Any]]:
-        """Get state value by path"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT data, encrypted, updated_by, updated_at
-                FROM state
-                WHERE channel_id = ? AND path = ?
-            """, (channel_id, path))
-            
-            row = cursor.fetchone()
-            if not row:
-                return None
-            
-            # Parse data (JSON if not encrypted, string if encrypted)
-            data = row["data"]
-            if not row["encrypted"]:
-                try:
-                    data = json.loads(data)
-                except json.JSONDecodeError:
-                    pass  # Keep as string if not valid JSON
-            
-            return {
-                "data": data,
-                "encrypted": bool(row["encrypted"]),
-                "updated_by": row["updated_by"],
-                "updated_at": row["updated_at"]
-            }
-    
-    def set_state(
-        self,
-        channel_id: str,
-        path: str,
-        data: Union[Dict, str],
-        encrypted: bool,
-        updated_by: str,
-        updated_at: int
-    ):
-        """Set state value"""
-        # Serialize data
-        if isinstance(data, dict):
-            data_str = json.dumps(data)
-        else:
-            data_str = data
-        
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO state 
-                (channel_id, path, data, encrypted, updated_by, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (channel_id, path, data_str, encrypted, updated_by, updated_at))
-    
-    def delete_state(self, channel_id: str, path: str) -> bool:
-        """Delete state value"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                DELETE FROM state
-                WHERE channel_id = ? AND path = ?
-            """, (channel_id, path))
-            return cursor.rowcount > 0
-    
-    def list_state(
-        self,
-        channel_id: str,
-        prefix: str
-    ) -> List[Dict[str, Any]]:
-        """List all state entries matching a prefix"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT path, data, encrypted, updated_by, updated_at
-                FROM state
-                WHERE channel_id = ? AND path LIKE ?
-                ORDER BY path
-            """, (channel_id, f"{prefix}%"))
-            
-            results = []
-            for row in cursor.fetchall():
-                data = row["data"]
-                if not row["encrypted"]:
-                    try:
-                        data = json.loads(data)
-                    except json.JSONDecodeError:
-                        pass
-                
-                results.append({
-                    "path": row["path"],
-                    "data": data,
-                    "encrypted": bool(row["encrypted"]),
-                    "updated_by": row["updated_by"],
-                    "updated_at": row["updated_at"]
-                })
-            
-            return results
-    
+
     # ========================================================================
     # Message Operations
     # ========================================================================

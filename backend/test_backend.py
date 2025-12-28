@@ -12,6 +12,7 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from database import Database
+from sqlite_state_manager import SqliteStateManager
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import encode_channel_id, encode_user_id, decode_identifier
@@ -25,18 +26,19 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 
 def test_database():
     """Test database operations"""
-    print("Testing database operations...")
-    
+    print("Testing database and state operations...")
+
     # Create temporary database
     with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
         db_path = f.name
-    
+
     try:
         db = Database(db_path)
-        
+        state_manager = SqliteStateManager(db_path)
+
         # Test state operations
         print("  Testing state storage...")
-        db.set_state(
+        state_manager.set_state(
             "channel1",
             "members/alice",
             {"public_key": "alice_key", "added_at": 12345},
@@ -45,7 +47,7 @@ def test_database():
             updated_at=12345
         )
 
-        state = db.get_state("channel1", "members/alice")
+        state = state_manager.get_state("channel1", "members/alice")
         assert state is not None
         assert state["data"]["public_key"] == "alice_key"
         print("✓ State storage works")
@@ -155,8 +157,9 @@ def test_authorization():
     
     try:
         db = Database(db_path)
+        state_manager = SqliteStateManager(db_path)
         crypto = CryptoUtils()
-        authz = AuthorizationEngine(db, crypto)
+        authz = AuthorizationEngine(state_manager, crypto)
         
         # Generate keypairs
         admin_private = ed25519.Ed25519PrivateKey.generate()
@@ -197,7 +200,7 @@ def test_authorization():
         capability["signature"] = crypto.base64_encode(signature)
 
         # Store capability in state
-        db.set_state(
+        state_manager.set_state(
             channel_id,
             f"members/{user_id}/rights/read_all",
             capability,
@@ -361,8 +364,9 @@ def test_integration():
     
     try:
         db = Database(db_path)
+        state_manager = SqliteStateManager(db_path)
         crypto = CryptoUtils()
-        authz = AuthorizationEngine(db, crypto)
+        authz = AuthorizationEngine(state_manager, crypto)
         
         # Setup: Create channel and admin
         print("  Setting up channel and admin...")
@@ -373,7 +377,7 @@ def test_integration():
         channel_id = encode_channel_id(admin_public_bytes)
 
         # Add admin as member
-        db.set_state(
+        state_manager.set_state(
             channel_id,
             f"members/{admin_id}",
             {
@@ -398,7 +402,7 @@ def test_integration():
         )
         admin_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
 
-        db.set_state(
+        state_manager.set_state(
             channel_id,
             f"members/{admin_id}/rights/admin",
             admin_cap,
@@ -417,7 +421,7 @@ def test_integration():
         # Admin adds user (should work)
         assert authz.check_permission(channel_id, admin_id, "create", f"members/{user_id}")
 
-        db.set_state(
+        state_manager.set_state(
             channel_id,
             f"members/{user_id}",
             {
@@ -444,7 +448,7 @@ def test_integration():
         )
         post_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
 
-        db.set_state(
+        state_manager.set_state(
             channel_id,
             f"members/{user_id}/rights/post",
             post_cap,

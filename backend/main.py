@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 import secrets
 
 from database import Database
+from sqlite_state_manager import SqliteStateManager
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import (
@@ -39,8 +40,9 @@ app = FastAPI(
 
 # Initialize components
 db = Database("messaging.db")
+state_manager = SqliteStateManager("messaging.db")
 crypto = CryptoUtils()
-authz = AuthorizationEngine(db, crypto)
+authz = AuthorizationEngine(state_manager, crypto)
 security = HTTPBearer()
 blob_manager = FilesystemBlobManager("blobs")
 
@@ -240,7 +242,7 @@ async def auth_verify(
         raise HTTPException(status_code=401, detail="Invalid signature")
     
     # Check if user is a member of this channel
-    member = db.get_state(channel_id, f"members/{request.public_key}")
+    member = state_manager.get_state(channel_id, f"members/{request.public_key}")
     if not member and request.public_key != channel_id:
         raise HTTPException(
             status_code=403,
@@ -289,7 +291,7 @@ async def get_state(
     ):
         raise HTTPException(status_code=403, detail="No read permission")
     
-    state = db.get_state(channel_id, path)
+    state = state_manager.get_state(channel_id, path)
     if state is None:
         raise HTTPException(status_code=404, detail="State not found")
     
@@ -308,7 +310,7 @@ async def put_state(
         raise HTTPException(status_code=403, detail="Wrong channel")
     
     # Check if state already exists
-    existing = db.get_state(channel_id, path)
+    existing = state_manager.get_state(channel_id, path)
     operation = "write" if existing else "create"
     
     # Check permission
@@ -346,7 +348,7 @@ async def put_state(
     
     # Store state
     now = int(time.time() * 1000)  # milliseconds
-    db.set_state(
+    state_manager.set_state(
         channel_id,
         path,
         state_data.data,
@@ -377,7 +379,7 @@ async def delete_state(
     ):
         raise HTTPException(status_code=403, detail="No delete permission")
     
-    if not db.delete_state(channel_id, path):
+    if not state_manager.delete_state(channel_id, path):
         raise HTTPException(status_code=404, detail="State not found")
     
     return Response(status_code=204)
