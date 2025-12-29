@@ -22,14 +22,14 @@ from datetime import datetime, timedelta
 import secrets
 
 from database import Database
-from sqlite_state_manager import SqliteStateStore
+from sqlite_state_store import SqliteStateStore
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import (
     encode_channel_id, encode_user_id, encode_message_id, encode_blob_id,
     extract_public_key, extract_hash, decode_identifier, IdType
 )
-from filesystem_blob_manager import FilesystemBlobStore
+from filesystem_blob_store import FilesystemBlobStore
 
 # Initialize FastAPI app
 app = FastAPI(

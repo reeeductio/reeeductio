@@ -9,7 +9,7 @@ Implements:
 """
 
 from typing import Optional, List, Dict, Any
-from state_manager import StateStore
+from state_store import StateStore
 from crypto import CryptoUtils
 from identifiers import extract_public_key
 import fnmatch

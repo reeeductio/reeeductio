@@ -9,7 +9,7 @@ import sqlite3
 import json
 from typing import Optional, List, Dict, Any, Union
 from contextlib import contextmanager
-from state_manager import StateStore
+from state_store import StateStore
 
 
 class SqliteStateStore(StateStore):

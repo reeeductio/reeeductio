@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from blob_manager import BlobStore
+from blob_store import BlobStore
 from identifiers import decode_identifier, IdType
 
 

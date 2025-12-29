@@ -8,7 +8,7 @@ Database class infrastructure.
 import time
 from typing import Optional, TYPE_CHECKING
 
-from blob_manager import BlobStore
+from blob_store import BlobStore
 
 if TYPE_CHECKING:
     from database import Database

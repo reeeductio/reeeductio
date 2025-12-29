@@ -12,12 +12,12 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from database import Database
-from sqlite_state_manager import SqliteStateStore
+from sqlite_state_store import SqliteStateStore
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import encode_channel_id, encode_user_id, decode_identifier
-from filesystem_blob_manager import FilesystemBlobStore
-from database_blob_manager import DatabaseBlobStore
+from filesystem_blob_store import FilesystemBlobStore
+from database_blob_store import DatabaseBlobStore
 import tempfile
 import base64
 import shutil

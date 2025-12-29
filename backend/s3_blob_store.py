@@ -6,7 +6,7 @@ and provides pre-signed URLs for direct client uploads/downloads.
 """
 
 from typing import Optional
-from blob_manager import BlobStore
+from blob_store import BlobStore
 from identifiers import decode_identifier, IdType
 
 
