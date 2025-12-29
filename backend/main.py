@@ -22,14 +22,14 @@ from datetime import datetime, timedelta
 import secrets
 
 from database import Database
-from sqlite_state_manager import SqliteStateManager
+from sqlite_state_manager import SqliteStateStore
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import (
     encode_channel_id, encode_user_id, encode_message_id, encode_blob_id,
     extract_public_key, extract_hash, decode_identifier, IdType
 )
-from filesystem_blob_manager import FilesystemBlobManager
+from filesystem_blob_manager import FilesystemBlobStore
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -40,11 +40,11 @@ app = FastAPI(
 
 # Initialize components
 db = Database("messaging.db")
-state_manager = SqliteStateManager("messaging.db")
+state_store = SqliteStateStore("messaging.db")
 crypto = CryptoUtils()
-authz = AuthorizationEngine(state_manager, crypto)
+authz = AuthorizationEngine(state_store, crypto)
 security = HTTPBearer()
-blob_manager = FilesystemBlobManager("blobs")
+blob_store = FilesystemBlobStore("blobs")
 
 # JWT configuration
 JWT_SECRET = secrets.token_urlsafe(32)  # In production, load from environment
@@ -242,7 +242,7 @@ async def auth_verify(
         raise HTTPException(status_code=401, detail="Invalid signature")
     
     # Check if user is a member of this channel
-    member = state_manager.get_state(channel_id, f"members/{request.public_key}")
+    member = state_store.get_state(channel_id, f"members/{request.public_key}")
     if not member and request.public_key != channel_id:
         raise HTTPException(
             status_code=403,
@@ -291,10 +291,10 @@ async def get_state(
     ):
         raise HTTPException(status_code=403, detail="No read permission")
     
-    state = state_manager.get_state(channel_id, path)
+    state = state_store.get_state(channel_id, path)
     if state is None:
         raise HTTPException(status_code=404, detail="State not found")
-    
+
     return StateResponse(**state)
 
 
@@ -310,7 +310,7 @@ async def put_state(
         raise HTTPException(status_code=403, detail="Wrong channel")
     
     # Check if state already exists
-    existing = state_manager.get_state(channel_id, path)
+    existing = state_store.get_state(channel_id, path)
     operation = "write" if existing else "create"
     
     # Check permission
@@ -348,7 +348,7 @@ async def put_state(
     
     # Store state
     now = int(time.time() * 1000)  # milliseconds
-    state_manager.set_state(
+    state_store.set_state(
         channel_id,
         path,
         state_data.data,
@@ -356,7 +356,7 @@ async def put_state(
         current_user["public_key"],
         now
     )
-    
+
     return {"path": path, "updated_at": now}
 
 
@@ -379,9 +379,9 @@ async def delete_state(
     ):
         raise HTTPException(status_code=403, detail="No delete permission")
     
-    if not state_manager.delete_state(channel_id, path):
+    if not state_store.delete_state(channel_id, path):
         raise HTTPException(status_code=404, detail="State not found")
-    
+
     return Response(status_code=204)
 
 
@@ -564,8 +564,8 @@ async def upload_blob(
     current_user: dict = Depends(get_current_user)
 ):
     """Upload an encrypted blob with explicit blob_id"""
-    # Check if blob manager supports pre-signed URLs
-    upload_url = blob_manager.get_upload_url(blob_id)
+    # Check if blob store supports pre-signed URLs
+    upload_url = blob_store.get_upload_url(blob_id)
     if upload_url:
         # Redirect client to upload directly to S3
         return RedirectResponse(
@@ -590,7 +590,7 @@ async def upload_blob(
 
     # Store blob
     try:
-        blob_manager.add_blob(blob_id, blob_data)
+        blob_store.add_blob(blob_id, blob_data)
     except FileExistsError:
         raise HTTPException(
             status_code=409,
@@ -614,8 +614,8 @@ async def download_blob(
     current_user: dict = Depends(get_current_user)
 ):
     """Download a blob by its ID"""
-    # Check if blob manager supports pre-signed URLs
-    download_url = blob_manager.get_download_url(blob_id)
+    # Check if blob store supports pre-signed URLs
+    download_url = blob_store.get_download_url(blob_id)
     if download_url:
         # Redirect client to download directly from S3
         return RedirectResponse(
@@ -624,7 +624,7 @@ async def download_blob(
         )
 
     # Direct download from server
-    blob_data = blob_manager.get_blob(blob_id)
+    blob_data = blob_store.get_blob(blob_id)
     if not blob_data:
         raise HTTPException(status_code=404, detail="Blob not found")
 
@@ -637,7 +637,7 @@ async def delete_blob(
     current_user: dict = Depends(get_current_user)
 ):
     """Delete a blob"""
-    if not blob_manager.delete_blob(blob_id):
+    if not blob_store.delete_blob(blob_id):
         raise HTTPException(status_code=404, detail="Blob not found")
 
     return Response(status_code=204)

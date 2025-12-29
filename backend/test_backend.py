@@ -12,12 +12,12 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from database import Database
-from sqlite_state_manager import SqliteStateManager
+from sqlite_state_manager import SqliteStateStore
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import encode_channel_id, encode_user_id, decode_identifier
-from filesystem_blob_manager import FilesystemBlobManager
-from database_blob_manager import DatabaseBlobManager
+from filesystem_blob_manager import FilesystemBlobStore
+from database_blob_manager import DatabaseBlobStore
 import tempfile
 import base64
 import shutil
@@ -34,11 +34,11 @@ def test_database():
 
     try:
         db = Database(db_path)
-        state_manager = SqliteStateManager(db_path)
+        state_store = SqliteStateStore(db_path)
 
         # Test state operations
         print("  Testing state storage...")
-        state_manager.set_state(
+        state_store.set_state(
             "channel1",
             "members/alice",
             {"public_key": "alice_key", "added_at": 12345},
@@ -47,7 +47,7 @@ def test_database():
             updated_at=12345
         )
 
-        state = state_manager.get_state("channel1", "members/alice")
+        state = state_store.get_state("channel1", "members/alice")
         assert state is not None
         assert state["data"]["public_key"] == "alice_key"
         print("✓ State storage works")
@@ -151,15 +151,15 @@ def test_crypto():
 def test_authorization():
     """Test authorization engine"""
     print("Testing authorization engine...")
-    
+
     with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
         db_path = f.name
-    
+
     try:
         db = Database(db_path)
-        state_manager = SqliteStateManager(db_path)
+        state_store = SqliteStateStore(db_path)
         crypto = CryptoUtils()
-        authz = AuthorizationEngine(state_manager, crypto)
+        authz = AuthorizationEngine(state_store, crypto)
         
         # Generate keypairs
         admin_private = ed25519.Ed25519PrivateKey.generate()
@@ -200,7 +200,7 @@ def test_authorization():
         capability["signature"] = crypto.base64_encode(signature)
 
         # Store capability in state
-        state_manager.set_state(
+        state_store.set_state(
             channel_id,
             f"members/{user_id}/rights/read_all",
             capability,
@@ -263,27 +263,27 @@ def test_blob_storage():
     blob_data = b"This is encrypted blob content"
     blob_id = crypto.compute_blob_id(blob_data)
 
-    # Test FilesystemBlobManager
-    print("  Testing FilesystemBlobManager...")
+    # Test FilesystemBlobStore
+    print("  Testing FilesystemBlobStore...")
     blob_dir = tempfile.mkdtemp()
     try:
-        fs_manager = FilesystemBlobManager(blob_dir)
+        fs_store = FilesystemBlobStore(blob_dir)
 
         # Test successful upload
         print("  Testing blob upload...")
-        fs_manager.add_blob(blob_id, blob_data)
+        fs_store.add_blob(blob_id, blob_data)
         print("  ✓ Blob upload works")
 
         # Test retrieval
         print("  Testing blob retrieval...")
-        retrieved = fs_manager.get_blob(blob_id)
+        retrieved = fs_store.get_blob(blob_id)
         assert retrieved == blob_data
         print("  ✓ Blob retrieval works")
 
         # Test duplicate upload (should raise FileExistsError)
         print("  Testing duplicate blob rejection...")
         try:
-            fs_manager.add_blob(blob_id, blob_data)
+            fs_store.add_blob(blob_id, blob_data)
             assert False, "Should have raised FileExistsError"
         except FileExistsError:
             print("  ✓ Duplicate blob rejected")
@@ -292,7 +292,7 @@ def test_blob_storage():
         print("  Testing invalid blob_id rejection...")
         try:
             invalid_id = encode_user_id(b"x" * 32)  # USER type instead of BLOB
-            fs_manager.add_blob(invalid_id, blob_data)
+            fs_store.add_blob(invalid_id, blob_data)
             assert False, "Should have raised ValueError"
         except ValueError as e:
             assert "BLOB type" in str(e)
@@ -301,52 +301,52 @@ def test_blob_storage():
         # Test retrieval of non-existent blob
         print("  Testing non-existent blob retrieval...")
         non_existent_id = crypto.compute_blob_id(b"different content")
-        assert fs_manager.get_blob(non_existent_id) is None
+        assert fs_store.get_blob(non_existent_id) is None
         print("  ✓ Non-existent blob returns None")
 
         # Test deletion
         print("  Testing blob deletion...")
-        assert fs_manager.delete_blob(blob_id) == True
-        assert fs_manager.get_blob(blob_id) is None
+        assert fs_store.delete_blob(blob_id) == True
+        assert fs_store.get_blob(blob_id) is None
         print("  ✓ Blob deletion works")
 
         # Test deleting non-existent blob
         print("  Testing non-existent blob deletion...")
-        assert fs_manager.delete_blob(blob_id) == False
+        assert fs_store.delete_blob(blob_id) == False
         print("  ✓ Deleting non-existent blob returns False")
 
     finally:
         shutil.rmtree(blob_dir)
 
-    # Test DatabaseBlobManager
-    print("  Testing DatabaseBlobManager...")
+    # Test DatabaseBlobStore
+    print("  Testing DatabaseBlobStore...")
     with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
         db_path = f.name
 
     try:
         db = Database(db_path)
-        db_manager = DatabaseBlobManager(db)
+        db_store = DatabaseBlobStore(db)
 
         # Test successful upload
         print("  Testing database blob upload...")
-        db_manager.add_blob(blob_id, blob_data)
+        db_store.add_blob(blob_id, blob_data)
         print("  ✓ Database blob upload works")
 
         # Test retrieval
         print("  Testing database blob retrieval...")
-        retrieved = db_manager.get_blob(blob_id)
+        retrieved = db_store.get_blob(blob_id)
         assert retrieved == blob_data
         print("  ✓ Database blob retrieval works")
 
         # Test deletion
         print("  Testing database blob deletion...")
-        assert db_manager.delete_blob(blob_id) == True
-        assert db_manager.get_blob(blob_id) is None
+        assert db_store.delete_blob(blob_id) == True
+        assert db_store.get_blob(blob_id) is None
         print("  ✓ Database blob deletion works")
 
         # Test deleting non-existent blob
         print("  Testing database non-existent blob deletion...")
-        assert db_manager.delete_blob(blob_id) == False
+        assert db_store.delete_blob(blob_id) == False
         print("  ✓ Database: Deleting non-existent blob returns False")
 
     finally:
@@ -358,16 +358,16 @@ def test_blob_storage():
 def test_integration():
     """Test end-to-end workflow"""
     print("Testing end-to-end workflow...")
-    
+
     with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
         db_path = f.name
-    
+
     try:
         db = Database(db_path)
-        state_manager = SqliteStateManager(db_path)
+        state_store = SqliteStateStore(db_path)
         crypto = CryptoUtils()
-        authz = AuthorizationEngine(state_manager, crypto)
-        
+        authz = AuthorizationEngine(state_store, crypto)
+
         # Setup: Create channel and admin
         print("  Setting up channel and admin...")
         admin_private = ed25519.Ed25519PrivateKey.generate()
@@ -377,7 +377,7 @@ def test_integration():
         channel_id = encode_channel_id(admin_public_bytes)
 
         # Add admin as member
-        state_manager.set_state(
+        state_store.set_state(
             channel_id,
             f"members/{admin_id}",
             {
@@ -402,7 +402,7 @@ def test_integration():
         )
         admin_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
 
-        state_manager.set_state(
+        state_store.set_state(
             channel_id,
             f"members/{admin_id}/rights/admin",
             admin_cap,
@@ -421,7 +421,7 @@ def test_integration():
         # Admin adds user (should work)
         assert authz.check_permission(channel_id, admin_id, "create", f"members/{user_id}")
 
-        state_manager.set_state(
+        state_store.set_state(
             channel_id,
             f"members/{user_id}",
             {
@@ -448,7 +448,7 @@ def test_integration():
         )
         post_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
 
-        state_manager.set_state(
+        state_store.set_state(
             channel_id,
             f"members/{user_id}/rights/post",
             post_cap,

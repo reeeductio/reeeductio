@@ -2,7 +2,7 @@
 Database layer for E2EE messaging system using SQLite
 
 Note: This class now only handles messages. State operations have been
-moved to StateManager implementations (see state_manager.py).
+moved to StateStore implementations (see state_manager.py).
 """
 
 import sqlite3

@@ -1,7 +1,7 @@
 """
 State storage abstraction layer for E2EE messaging system
 
-Provides a base StateManager interface and concrete implementations for
+Provides a base StateStore interface and concrete implementations for
 storing channel state in different backends (SQLite, LMDB, DynamoDB, etc.)
 """
 
@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any, Union
 
 
-class StateManager(ABC):
+class StateStore(ABC):
     """Abstract base class for state storage backends"""
 
     @abstractmethod

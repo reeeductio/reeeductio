@@ -1,5 +1,5 @@
 """
-SQLite implementation of StateManager
+SQLite implementation of StateStore
 
 Stores channel state in a SQLite database with support for both
 plaintext and encrypted state values.
@@ -9,10 +9,10 @@ import sqlite3
 import json
 from typing import Optional, List, Dict, Any, Union
 from contextlib import contextmanager
-from state_manager import StateManager
+from state_manager import StateStore
 
 
-class SqliteStateManager(StateManager):
+class SqliteStateStore(StateStore):
     """Store channel state in SQLite database"""
 
     def __init__(self, db_path: str):

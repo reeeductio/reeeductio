@@ -6,11 +6,11 @@ and provides pre-signed URLs for direct client uploads/downloads.
 """
 
 from typing import Optional
-from blob_manager import BlobManager
+from blob_manager import BlobStore
 from identifiers import decode_identifier, IdType
 
 
-class S3BlobManager(BlobManager):
+class S3BlobStore(BlobStore):
     """Store blobs in S3-compatible object storage with pre-signed URL support"""
 
     def __init__(

@@ -9,11 +9,11 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from blob_manager import BlobManager
+from blob_manager import BlobStore
 from identifiers import decode_identifier, IdType
 
 
-class FilesystemBlobManager(BlobManager):
+class FilesystemBlobStore(BlobStore):
     """Store blobs as files in the filesystem"""
 
     def __init__(self, blob_dir: str = "blobs"):

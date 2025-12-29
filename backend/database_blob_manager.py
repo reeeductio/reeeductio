@@ -8,13 +8,13 @@ Database class infrastructure.
 import time
 from typing import Optional, TYPE_CHECKING
 
-from blob_manager import BlobManager
+from blob_manager import BlobStore
 
 if TYPE_CHECKING:
     from database import Database
 
 
-class DatabaseBlobManager(BlobManager):
+class DatabaseBlobStore(BlobStore):
     """Store blobs in SQLite database using shared Database connection"""
 
     def __init__(self, db: 'Database'):

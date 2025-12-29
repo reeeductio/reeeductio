@@ -9,7 +9,7 @@ Implements:
 """
 
 from typing import Optional, List, Dict, Any
-from state_manager import StateManager
+from state_manager import StateStore
 from crypto import CryptoUtils
 from identifiers import extract_public_key
 import fnmatch
@@ -18,8 +18,8 @@ import fnmatch
 class AuthorizationEngine:
     """Capability-based authorization with signed permissions"""
 
-    def __init__(self, state_manager: StateManager, crypto: CryptoUtils):
-        self.state_manager = state_manager
+    def __init__(self, state_store: StateStore, crypto: CryptoUtils):
+        self.state_store = state_store
         self.crypto = crypto
     
     def check_permission(
@@ -74,7 +74,7 @@ class AuthorizationEngine:
         members/{public_key}/rights/{capability_id}
         """
         prefix = f"members/{user_public_key}/rights/"
-        capability_states = self.state_manager.list_state(channel_id, prefix)
+        capability_states = self.state_store.list_state(channel_id, prefix)
         
         capabilities = []
         for state in capability_states:

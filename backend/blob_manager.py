@@ -1,7 +1,7 @@
 """
 Blob storage abstraction layer for E2EE messaging system
 
-Provides a base BlobManager interface and concrete implementations for
+Provides a base BlobStore interface and concrete implementations for
 storing encrypted blobs in different backends (database, filesystem, S3, etc.)
 """
 
@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 
-class BlobManager(ABC):
+class BlobStore(ABC):
     """Abstract base class for blob storage backends"""
 
     @abstractmethod
