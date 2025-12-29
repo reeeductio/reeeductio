@@ -13,6 +13,8 @@ from state_store import StateStore
 from crypto import CryptoUtils
 from identifiers import extract_public_key
 import fnmatch
+import base64
+import json
 
 
 class AuthorizationEngine:
@@ -72,19 +74,27 @@ class AuthorizationEngine:
 
         Capabilities are stored at state path:
         members/{public_key}/rights/{capability_id}
+
+        Data is base64-encoded JSON, so we need to decode it.
         """
         prefix = f"members/{user_public_key}/rights/"
         capability_states = self.state_store.list_state(channel_id, prefix)
-        
+
         capabilities = []
         for state in capability_states:
-            if not state["encrypted"] and isinstance(state["data"], dict):
-                cap = state["data"]
-                
+            # Decode base64 data and parse JSON
+            try:
+                decoded = base64.b64decode(state["data"])
+                cap = json.loads(decoded)
+
                 # Verify capability signature
                 if self._verify_capability(channel_id, user_public_key, cap):
                     capabilities.append(cap)
-        
+            except Exception as e:
+                # Skip invalid capability entries
+                print(f"Failed to decode capability: {e}")
+                continue
+
         return capabilities
     
     def _verify_capability(

@@ -1,13 +1,13 @@
 """
 SQLite implementation of StateStore
 
-Stores channel state in a SQLite database with support for both
-plaintext and encrypted state values.
+Stores channel state in a SQLite database. All state data is stored
+as base64-encoded strings; interpretation is context-dependent.
 """
 
 import sqlite3
 import json
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 from state_store import StateStore
 
@@ -45,12 +45,12 @@ class SqliteStateStore(StateStore):
             cursor = conn.cursor()
 
             # State table - stores all channel state (members, capabilities, metadata)
+            # Data is always stored as base64 string; interpretation is context-dependent
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS state (
                     channel_id TEXT NOT NULL,
                     path TEXT NOT NULL,
                     data TEXT NOT NULL,
-                    encrypted BOOLEAN NOT NULL,
                     updated_by TEXT NOT NULL,
                     updated_at INTEGER NOT NULL,
                     PRIMARY KEY (channel_id, path)
@@ -70,11 +70,11 @@ class SqliteStateStore(StateStore):
         channel_id: str,
         path: str
     ) -> Optional[Dict[str, Any]]:
-        """Get state value by path"""
+        """Get state value by path (data is always returned as base64 string)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT data, encrypted, updated_by, updated_at
+                SELECT data, updated_by, updated_at
                 FROM state
                 WHERE channel_id = ? AND path = ?
             """, (channel_id, path))
@@ -83,17 +83,8 @@ class SqliteStateStore(StateStore):
             if not row:
                 return None
 
-            # Parse data (JSON if not encrypted, string if encrypted)
-            data = row["data"]
-            if not row["encrypted"]:
-                try:
-                    data = json.loads(data)
-                except json.JSONDecodeError:
-                    pass  # Keep as string if not valid JSON
-
             return {
-                "data": data,
-                "encrypted": bool(row["encrypted"]),
+                "data": row["data"],
                 "updated_by": row["updated_by"],
                 "updated_at": row["updated_at"]
             }
@@ -102,25 +93,18 @@ class SqliteStateStore(StateStore):
         self,
         channel_id: str,
         path: str,
-        data: Union[Dict, str],
-        encrypted: bool,
+        data: str,
         updated_by: str,
         updated_at: int
     ) -> None:
-        """Set state value"""
-        # Serialize data
-        if isinstance(data, dict):
-            data_str = json.dumps(data)
-        else:
-            data_str = data
-
+        """Set state value (data should be base64-encoded string)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO state
-                (channel_id, path, data, encrypted, updated_by, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (channel_id, path, data_str, encrypted, updated_by, updated_at))
+                (channel_id, path, data, updated_by, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (channel_id, path, data, updated_by, updated_at))
 
     def delete_state(self, channel_id: str, path: str) -> bool:
         """Delete state value"""
@@ -137,11 +121,11 @@ class SqliteStateStore(StateStore):
         channel_id: str,
         prefix: str
     ) -> List[Dict[str, Any]]:
-        """List all state entries matching a prefix"""
+        """List all state entries matching a prefix (data is always base64 string)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT path, data, encrypted, updated_by, updated_at
+                SELECT path, data, updated_by, updated_at
                 FROM state
                 WHERE channel_id = ? AND path LIKE ?
                 ORDER BY path
@@ -149,17 +133,9 @@ class SqliteStateStore(StateStore):
 
             results = []
             for row in cursor.fetchall():
-                data = row["data"]
-                if not row["encrypted"]:
-                    try:
-                        data = json.loads(data)
-                    except json.JSONDecodeError:
-                        pass
-
                 results.append({
                     "path": row["path"],
-                    "data": data,
-                    "encrypted": bool(row["encrypted"]),
+                    "data": row["data"],
                     "updated_by": row["updated_by"],
                     "updated_at": row["updated_at"]
                 })

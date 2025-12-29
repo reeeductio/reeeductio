@@ -7,7 +7,7 @@ info:
     ## Architecture
     - **Channels**: Access control boundary (one shared symmetric key)
     - **Topics**: Message streams within a channel (independent blockchain-like chains)
-    - **State**: Per-channel key-value store (plaintext or encrypted)
+    - **State**: Per-channel key-value store (base64-encoded data, context-dependent interpretation)
     - **Capabilities**: Granular, signed permissions using public key cryptography
     
     ## Security Model
@@ -29,7 +29,7 @@ tags:
   - name: Authentication
     description: Challenge-response authentication using Ed25519 signatures
   - name: State
-    description: Channel state storage (members, capabilities, metadata)
+    description: Channel state storage (members, capabilities, metadata) - all data stored as base64
   - name: Messages
     description: Blockchain-style message streams
   - name: Blobs
@@ -155,7 +155,7 @@ paths:
     get:
       tags: [State]
       summary: Get state value
-      description: Retrieve state data (plaintext or encrypted)
+      description: Retrieve state data as base64-encoded string
       parameters:
         - $ref: '#/components/parameters/ChannelId'
         - name: path
@@ -175,13 +175,9 @@ paths:
                 type: object
                 properties:
                   data:
-                    oneOf:
-                      - type: object
-                      - type: string
-                    description: Plaintext JSON or base64 encrypted blob
-                  encrypted:
-                    type: boolean
-                    description: Whether data is encrypted
+                    type: string
+                    format: base64
+                    description: Base64-encoded state data (interpretation is context-dependent)
                   updated_at:
                     type: integer
                     format: int64
@@ -218,16 +214,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [data, encrypted]
+              required: [data]
               properties:
                 data:
-                  oneOf:
-                    - type: object
-                    - type: string
-                  description: Plaintext JSON or base64 encrypted blob
-                encrypted:
-                  type: boolean
-                  description: Whether data is encrypted
+                  type: string
+                  format: base64
+                  description: Base64-encoded state data (interpretation is context-dependent)
                 signature:
                   type: string
                   format: base64

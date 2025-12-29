@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header, Query, Path as Path
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any
 import jwt
 import hashlib
 import time
@@ -20,6 +20,7 @@ import json
 import re
 from datetime import datetime, timedelta
 import secrets
+import base64
 
 from sqlite_message_store import SqliteMessageStore
 from sqlite_state_store import SqliteStateStore
@@ -93,15 +94,13 @@ class TokenResponse(BaseModel):
 
 
 class StateData(BaseModel):
-    data: Union[Dict[str, Any], str] = Field(..., description="Plaintext JSON or base64 encrypted")
-    encrypted: bool
+    data: str = Field(..., description="Base64-encoded state data")
     signature: Optional[str] = None
     signed_by: Optional[str] = None
 
 
 class StateResponse(BaseModel):
-    data: Union[Dict[str, Any], str]
-    encrypted: bool
+    data: str
     updated_at: int
     updated_by: str
 
@@ -333,18 +332,22 @@ async def put_state(
                 detail="Signature required for capability grants"
             )
 
-        # Capability grants must be plaintext dicts
-        if not isinstance(state_data.data, dict):
+        # Capability grants must be base64-encoded JSON objects
+        # Decode and parse to verify structure
+        try:
+            decoded = base64.b64decode(state_data.data)
+            capability_dict = json.loads(decoded)
+        except Exception as e:
             raise HTTPException(
                 status_code=400,
-                detail="Capability grants must be plaintext JSON objects"
+                detail=f"Capability grants must be base64-encoded JSON objects: {e}"
             )
 
         # Verify the capability itself
         if not authz.verify_capability_grant(
             channel_id,
             path,
-            state_data.data,
+            capability_dict,
             state_data.signed_by,
             state_data.signature
         ):
@@ -352,14 +355,13 @@ async def put_state(
                 status_code=403,
                 detail="Invalid capability grant or privilege escalation"
             )
-    
+
     # Store state
     now = int(time.time() * 1000)  # milliseconds
     state_store.set_state(
         channel_id,
         path,
         state_data.data,
-        state_data.encrypted,
         current_user["public_key"],
         now
     )
