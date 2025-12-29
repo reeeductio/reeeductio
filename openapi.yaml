@@ -443,6 +443,39 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /channels/{channel_id}/stream:
+    get:
+      tags: [WebSocket]
+      summary: WebSocket stream for real-time channel messages
+      description: |
+        Establishes a WebSocket connection to receive real-time messages from all topics in the channel.
+
+        **Protocol**: WebSocket (ws:// or wss://)
+
+        **Authentication**: Pass JWT token as query parameter `?token=<jwt>` or in the `Sec-WebSocket-Protocol` header.
+
+        **Message Format**: JSON-encoded message objects (same schema as Message)
+
+        **Connection**: Upgrade from HTTP to WebSocket using standard WebSocket handshake.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+          description: JWT bearer token for authentication (alternative to Sec-WebSocket-Protocol header)
+      responses:
+        '101':
+          description: Switching Protocols - WebSocket connection established
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      x-websocket:
+        messageSchema:
+          $ref: '#/components/schemas/Message'
+
   /blobs/{blob_id}:
     put:
       tags: [Blobs]
