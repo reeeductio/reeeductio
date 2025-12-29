@@ -12,6 +12,12 @@ dependencies = [
     "python-multipart>=0.0.6",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-xdist>=3.5.0",  # For parallel test execution
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -23,6 +29,16 @@ only-include = [
     "database.py",
     "crypto.py",
     "authorization.py",
-    "test_backend.py",
     "example_client.py",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
 ]
