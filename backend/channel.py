@@ -18,6 +18,7 @@ import json
 from sqlite_state_store import SqliteStateStore
 from sqlite_message_store import SqliteMessageStore
 from crypto import CryptoUtils
+from blob_store import BlobStore
 from authorization import AuthorizationEngine
 from identifiers import extract_public_key
 import secrets
@@ -46,6 +47,7 @@ class Channel:
         storage_dir: Optional[str] = None,
         state_store: Optional[SqliteStateStore] = None,
         message_store: Optional[SqliteMessageStore] = None,
+        blob_store: Optional[BlobStore] = None,
         jwt_secret: Optional[str] = None,
         jwt_algorithm: str = "HS256",
         jwt_expiry_hours: int = 24
@@ -58,11 +60,13 @@ class Channel:
             storage_dir: Directory for this channel's databases (if not providing stores)
             state_store: Optional pre-configured state store
             message_store: Optional pre-configured message store
+            blob_store: Optional blob store (shared across channels for deduplication)
             jwt_secret: JWT signing secret (shared across all channels for consistency)
             jwt_algorithm: JWT signing algorithm
             jwt_expiry_hours: JWT token expiry in hours
         """
         self.channel_id = channel_id
+        self.blob_store = blob_store
 
         # JWT configuration
         self.jwt_secret = jwt_secret
@@ -604,6 +608,243 @@ class Channel:
         """Check if user is a member of this channel"""
         member = self.state_store.get_state(self.channel_id, f"members/{user_id}")
         return member is not None or user_id == self.channel_id
+
+    def is_channel_admin(self, user_id: str) -> bool:
+        """
+        Check if user is a channel admin (currently just the channel owner).
+
+        Args:
+            user_id: The user's public key
+
+        Returns:
+            True if user is the channel owner (channel_id matches user_id)
+        """
+        return user_id == self.channel_id
+
+    # ========================================================================
+    # Blob Management
+    # ========================================================================
+
+    def authorize_blob_upload(self, user_id: str, token: str) -> bool:
+        """
+        Authorize a blob upload.
+
+        Any authenticated member of the channel can upload blobs.
+
+        Args:
+            user_id: The user's public key
+            token: JWT token to verify
+
+        Returns:
+            True if authorized
+
+        Raises:
+            ValueError: If authorization fails
+        """
+        # Verify token
+        self.verify_jwt(token)
+
+        # Check if user is a member
+        if not self.is_member(user_id):
+            raise ValueError("Not a member of this channel")
+
+        return True
+
+    def authorize_blob_download(self, user_id: str, token: str, blob_metadata) -> bool:
+        """
+        Authorize a blob download.
+
+        Users can download blobs only if their channel has a reference to the blob.
+
+        Args:
+            user_id: The user's public key
+            token: JWT token to verify
+            blob_metadata: BlobMetadata object with references list
+
+        Returns:
+            True if authorized
+
+        Raises:
+            ValueError: If authorization fails
+        """
+        # Verify token
+        self.verify_jwt(token)
+
+        # Check if user is a member
+        if not self.is_member(user_id):
+            raise ValueError("Not a member of this channel")
+
+        # Check if this channel has a reference to the blob
+        if not blob_metadata.has_reference(self.channel_id):
+            raise ValueError("Blob belongs to a different channel")
+
+        return True
+
+    def authorize_blob_delete(self, user_id: str, token: str, blob_metadata) -> bool:
+        """
+        Authorize a blob deletion (reference removal).
+
+        Only the uploader or channel admin can delete their channel's reference to a blob.
+
+        Args:
+            user_id: The user's public key
+            token: JWT token to verify
+            blob_metadata: BlobMetadata object with references list
+
+        Returns:
+            True if authorized
+
+        Raises:
+            ValueError: If authorization fails
+        """
+        # Verify token
+        self.verify_jwt(token)
+
+        # Check if user is a member
+        if not self.is_member(user_id):
+            raise ValueError("Not a member of this channel")
+
+        # Check if this channel has a reference to the blob
+        if not blob_metadata.has_reference(self.channel_id):
+            raise ValueError("Blob belongs to a different channel")
+
+        # Get the specific reference for this channel and user
+        reference = blob_metadata.get_reference(self.channel_id, user_id)
+
+        # Check if user is uploader or admin
+        is_uploader = (reference is not None)
+        is_admin = self.is_channel_admin(user_id)
+
+        if not (is_uploader or is_admin):
+            raise ValueError("Only the uploader or channel admin can delete this blob")
+
+        return True
+
+    def upload_blob(self, user_id: str, token: str, blob_id: str, blob_data: bytes) -> dict:
+        """
+        Upload a blob to the channel with authorization and validation.
+
+        Args:
+            user_id: The user's public key
+            token: JWT token to verify
+            blob_id: Content-addressed identifier for the blob
+            blob_data: Raw binary blob data
+
+        Returns:
+            Dictionary with blob_id and size
+
+        Raises:
+            ValueError: If authorization fails, blob_id mismatch, or blob_store not configured
+            FileExistsError: If blob reference already exists
+        """
+        if not self.blob_store:
+            raise ValueError("Blob store not configured for this channel")
+
+        # Authorize upload
+        self.authorize_blob_upload(user_id, token)
+
+        # Verify blob_id matches content hash
+        expected_blob_id = CryptoUtils.compute_blob_id(blob_data)
+        if blob_id != expected_blob_id:
+            raise ValueError(f"blob_id mismatch: provided {blob_id}, expected {expected_blob_id}")
+
+        # Store blob with ownership metadata
+        self.blob_store.add_blob(blob_id, blob_data, self.channel_id, user_id)
+
+        return {
+            "blob_id": blob_id,
+            "size": len(blob_data)
+        }
+
+    def download_blob(self, user_id: str, token: str, blob_id: str) -> Optional[bytes]:
+        """
+        Download a blob from the channel with authorization.
+
+        Args:
+            user_id: The user's public key
+            token: JWT token to verify
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            Blob data if found and authorized, None if not found
+
+        Raises:
+            ValueError: If authorization fails or blob_store not configured
+        """
+        if not self.blob_store:
+            raise ValueError("Blob store not configured for this channel")
+
+        # Get blob metadata for authorization
+        metadata = self.blob_store.get_blob_metadata(blob_id)
+        if not metadata:
+            return None
+
+        # Authorize download
+        self.authorize_blob_download(user_id, token, metadata)
+
+        # Retrieve blob data
+        return self.blob_store.get_blob(blob_id)
+
+    def get_blob_download_url(self, user_id: str, token: str, blob_id: str) -> Optional[str]:
+        """
+        Get a pre-signed download URL for a blob (if supported by blob store).
+
+        Args:
+            user_id: The user's public key
+            token: JWT token to verify
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            Pre-signed URL if available, None otherwise
+
+        Raises:
+            ValueError: If authorization fails or blob_store not configured
+        """
+        if not self.blob_store:
+            raise ValueError("Blob store not configured for this channel")
+
+        # Get blob metadata for authorization
+        metadata = self.blob_store.get_blob_metadata(blob_id)
+        if not metadata:
+            return None
+
+        # Authorize download
+        self.authorize_blob_download(user_id, token, metadata)
+
+        # Get pre-signed URL if supported
+        return self.blob_store.get_download_url(blob_id)
+
+    def delete_blob(self, user_id: str, token: str, blob_id: str) -> bool:
+        """
+        Delete a blob reference from the channel with authorization.
+
+        Removes the channel's reference to the blob. If no references remain,
+        the blob content is also deleted.
+
+        Args:
+            user_id: The user's public key
+            token: JWT token to verify
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            True if blob content was deleted (no references remain), False otherwise
+
+        Raises:
+            ValueError: If authorization fails or blob_store not configured
+        """
+        if not self.blob_store:
+            raise ValueError("Blob store not configured for this channel")
+
+        # Get blob metadata for authorization
+        metadata = self.blob_store.get_blob_metadata(blob_id)
+        if not metadata:
+            raise ValueError("Blob not found")
+
+        # Authorize deletion
+        self.authorize_blob_delete(user_id, token, metadata)
+
+        # Remove the reference (will delete blob content if no references remain)
+        return self.blob_store.remove_blob_reference(blob_id, self.channel_id, user_id)
 
     # ========================================================================
     # WebSocket Management

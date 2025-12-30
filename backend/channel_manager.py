@@ -9,6 +9,7 @@ import threading
 from typing import Dict, Optional
 from collections import OrderedDict
 from channel import Channel
+from blob_store import BlobStore
 
 
 class ChannelManager:
@@ -27,6 +28,7 @@ class ChannelManager:
         base_storage_dir: str = "channels",
         max_cached_channels: int = 1000,
         redis_client=None,  # Optional: redis.Redis() instance
+        blob_store: Optional[BlobStore] = None,
         jwt_secret: Optional[str] = None,
         jwt_algorithm: str = "HS256",
         jwt_expiry_hours: int = 24
@@ -38,6 +40,7 @@ class ChannelManager:
             base_storage_dir: Base directory for channel storage
             max_cached_channels: Maximum number of channels to keep in memory
             redis_client: Optional Redis client for pub/sub (set to None if using consistent hashing)
+            blob_store: Optional blob storage backend (shared across all channels)
             jwt_secret: JWT signing secret (shared across all channels)
             jwt_algorithm: JWT signing algorithm
             jwt_expiry_hours: JWT token expiry in hours
@@ -45,6 +48,7 @@ class ChannelManager:
         self.base_storage_dir = base_storage_dir
         self.max_cached_channels = max_cached_channels
         self.redis_client = redis_client
+        self.blob_store = blob_store
 
         # JWT configuration (shared across all channels)
         self.jwt_secret = jwt_secret
@@ -83,6 +87,7 @@ class ChannelManager:
             channel = Channel(
                 channel_id=channel_id,
                 storage_dir=storage_dir,
+                blob_store=self.blob_store,
                 jwt_secret=self.jwt_secret,
                 jwt_algorithm=self.jwt_algorithm,
                 jwt_expiry_hours=self.jwt_expiry_hours

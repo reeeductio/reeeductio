@@ -476,15 +476,16 @@ paths:
         messageSchema:
           $ref: '#/components/schemas/Message'
 
-  /blobs/{blob_id}:
+  /channels/{channel_id}/blobs/{blob_id}:
     put:
       tags: [Blobs]
       summary: Upload encrypted blob
       description: |
         Upload encrypted binary data (attachments, images, etc.) with explicit blob_id.
         The blob_id must match the SHA256 hash of the content.
-        Blobs are content-addressed and global (not per-channel).
+        Blobs are scoped to the channel - only channel members can access them.
       parameters:
+        - $ref: '#/components/parameters/ChannelId'
         - name: blob_id
           in: path
           required: true
@@ -552,8 +553,11 @@ paths:
     get:
       tags: [Blobs]
       summary: Download blob
-      description: Retrieve encrypted blob by its content hash
+      description: |
+        Retrieve encrypted blob by its content hash.
+        Only accessible to members of the same channel where the blob was uploaded.
       parameters:
+        - $ref: '#/components/parameters/ChannelId'
         - name: blob_id
           in: path
           required: true
@@ -581,6 +585,12 @@ paths:
                 type: string
                 format: uri
               description: Pre-signed S3 URL for downloading the blob directly from object storage
+        '403':
+          description: Blob belongs to a different channel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
         '401':
@@ -589,8 +599,11 @@ paths:
     delete:
       tags: [Blobs]
       summary: Delete blob
-      description: Remove blob from storage
+      description: |
+        Remove blob from storage.
+        Only the uploader or channel admin can delete a blob.
       parameters:
+        - $ref: '#/components/parameters/ChannelId'
         - name: blob_id
           in: path
           required: true
@@ -604,6 +617,12 @@ paths:
       responses:
         '204':
           description: Blob deleted successfully
+        '403':
+          description: Not authorized to delete this blob (must be uploader or channel admin)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
         '401':

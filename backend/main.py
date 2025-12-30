@@ -40,17 +40,6 @@ JWT_SECRET = config.server.jwt_secret or secrets.token_urlsafe(32)
 JWT_ALGORITHM = config.server.jwt_algorithm
 JWT_EXPIRY_HOURS = config.server.jwt_expiry_hours
 
-# Initialize components
-channel_manager = ChannelManager(
-    base_storage_dir="channels",
-    max_cached_channels=1000,
-    jwt_secret=JWT_SECRET,
-    jwt_algorithm=JWT_ALGORITHM,
-    jwt_expiry_hours=JWT_EXPIRY_HOURS
-)
-crypto = CryptoUtils()
-security = HTTPBearer()
-
 # Initialize blob store based on configuration
 if config.blob_store.type == "filesystem":
     blob_store = FilesystemBlobStore(config.blob_store.path)
@@ -60,6 +49,18 @@ elif config.blob_store.type == "sqlite":
     blob_store = SqliteBlobStore(config.blob_store.db_path)
 else:
     raise ValueError(f"Unsupported blob store type: {config.blob_store.type}")
+
+# Initialize components
+channel_manager = ChannelManager(
+    base_storage_dir="channels",
+    max_cached_channels=1000,
+    blob_store=blob_store,
+    jwt_secret=JWT_SECRET,
+    jwt_algorithm=JWT_ALGORITHM,
+    jwt_expiry_hours=JWT_EXPIRY_HOURS
+)
+crypto = CryptoUtils()
+security = HTTPBearer()
 
 CHALLENGE_EXPIRY_SECONDS = config.server.challenge_expiry_seconds
 
@@ -74,43 +75,6 @@ def validate_topic_id(topic_id: str) -> None:
             status_code=400,
             detail="Invalid topic_id format. Must be 2-64 characters, lowercase alphanumeric with hyphens/underscores, starting and ending with alphanumeric."
         )
-
-
-def authenticate_token(token: str) -> dict:
-    """
-    Authenticate a JWT token from any channel.
-
-    This is used for global resources like blobs that aren't channel-specific.
-    Extracts channel_id from token and verifies with that channel.
-
-    Args:
-        token: JWT token string
-
-    Returns:
-        Decoded token payload
-
-    Raises:
-        HTTPException: If token is invalid or verification fails
-    """
-    try:
-        payload = jwt.decode(
-            token,
-            JWT_SECRET,
-            algorithms=[JWT_ALGORITHM]
-        )
-        channel_id = payload.get("channel_id")
-        if not channel_id:
-            raise HTTPException(status_code=401, detail="Invalid token: missing channel_id")
-
-        # Verify token with the channel (ensures it hasn't been revoked, etc.)
-        channel = channel_manager.get_channel(channel_id)
-        channel.verify_jwt(token)
-
-        return payload
-    except jwt.InvalidTokenError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
 
 
 # ============================================================================
@@ -424,99 +388,111 @@ async def get_message_by_hash(
 # Blob Endpoints
 # ============================================================================
 
-@app.put("/blobs/{blob_id}", status_code=201, response_model=BlobUploadResponse)
+@app.put("/channels/{channel_id}/blobs/{blob_id}", status_code=201, response_model=BlobUploadResponse)
 async def upload_blob(
+    channel_id: str,
     blob_id: str,
     request: bytes = Depends(lambda: None),  # Will be overridden by actual request body
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Upload an encrypted blob with explicit blob_id"""
-    # Authenticate token
-    authenticate_token(credentials.credentials)
+    # Get channel and extract user from token
+    channel = channel_manager.get_channel(channel_id)
+    payload = channel.verify_jwt(credentials.credentials)
+    user_id = payload.get("sub")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
 
     # Check if blob store supports pre-signed URLs
     upload_url = blob_store.get_upload_url(blob_id)
     if upload_url:
+        # Authorize before returning pre-signed URL
+        try:
+            channel.authorize_blob_upload(user_id, credentials.credentials)
+        except ValueError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+
         # Redirect client to upload directly to S3
         return RedirectResponse(
             url=upload_url,
             status_code=307  # Temporary redirect, preserving method (PUT)
         )
 
-    # Direct upload to server
-    # In real implementation, read from request.body()
-    # For now, this is a placeholder
+    # Direct upload to server - read request body
     blob_data = request
 
-    # Compute expected blob ID from content to verify integrity
-    expected_blob_id = crypto.compute_blob_id(blob_data)
-
-    # Verify that provided blob_id matches the content hash
-    if blob_id != expected_blob_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"blob_id mismatch: provided {blob_id}, expected {expected_blob_id}"
-        )
-
-    # Store blob
+    # Use Channel method for upload (handles authorization, validation, and storage)
     try:
-        blob_store.add_blob(blob_id, blob_data)
+        result = channel.upload_blob(user_id, credentials.credentials, blob_id, blob_data)
+        return BlobUploadResponse(**result)
     except FileExistsError:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Blob {blob_id} already exists"
-        )
+        raise HTTPException(status_code=409, detail="Blob already exists")
     except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid blob: {str(e)}"
-        )
-
-    return BlobUploadResponse(
-        blob_id=blob_id,
-        size=len(blob_data)
-    )
+        raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/blobs/{blob_id}")
+@app.get("/channels/{channel_id}/blobs/{blob_id}")
 async def download_blob(
+    channel_id: str,
     blob_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Download a blob by its ID"""
-    # Authenticate token
-    authenticate_token(credentials.credentials)
+    # Get channel and extract user from token
+    channel = channel_manager.get_channel(channel_id)
+    payload = channel.verify_jwt(credentials.credentials)
+    user_id = payload.get("sub")
 
-    # Check if blob store supports pre-signed URLs
-    download_url = blob_store.get_download_url(blob_id)
-    if download_url:
-        # Redirect client to download directly from S3
-        return RedirectResponse(
-            url=download_url,
-            status_code=307  # Temporary redirect
-        )
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
 
-    # Direct download from server
-    blob_data = blob_store.get_blob(blob_id)
-    if not blob_data:
-        raise HTTPException(status_code=404, detail="Blob not found")
+    # Check if blob store supports pre-signed URLs (authorization happens inside method)
+    try:
+        download_url = channel.get_blob_download_url(user_id, credentials.credentials, blob_id)
+        if download_url:
+            # Redirect client to download directly from S3
+            return RedirectResponse(
+                url=download_url,
+                status_code=307  # Temporary redirect
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
-    return Response(content=blob_data, media_type="application/octet-stream")
+    # Direct download from server - use Channel method (authorization happens inside)
+    try:
+        blob_data = channel.download_blob(user_id, credentials.credentials, blob_id)
+        if not blob_data:
+            raise HTTPException(status_code=404, detail="Blob not found")
+        return Response(content=blob_data, media_type="application/octet-stream")
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
 
-@app.delete("/blobs/{blob_id}", status_code=204)
+@app.delete("/channels/{channel_id}/blobs/{blob_id}", status_code=204)
 async def delete_blob(
+    channel_id: str,
     blob_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Delete a blob"""
-    # Authenticate token
-    authenticate_token(credentials.credentials)
+    """Delete a blob (only by uploader or channel admin)"""
+    # Get channel and extract user from token
+    channel = channel_manager.get_channel(channel_id)
+    payload = channel.verify_jwt(credentials.credentials)
+    user_id = payload.get("sub")
 
-    if not blob_store.delete_blob(blob_id):
-        raise HTTPException(status_code=404, detail="Blob not found")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
 
-    return Response(status_code=204)
+    # Use Channel method for deletion (handles authorization and reference removal)
+    try:
+        channel.delete_blob(user_id, credentials.credentials, blob_id)
+        return Response(status_code=204)
+    except ValueError as e:
+        # Blob not found or authorization failed
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=403, detail=str(e))
 
 
 # ============================================================================

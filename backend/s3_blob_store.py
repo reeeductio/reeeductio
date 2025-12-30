@@ -6,8 +6,10 @@ and provides pre-signed URLs for direct client uploads/downloads.
 """
 
 import base64
+import json
+import time
 from typing import Optional
-from blob_store import BlobStore
+from blob_store import BlobStore, BlobMetadata, BlobReference
 from identifiers import decode_identifier, IdType, extract_hash
 from config import S3BlobConfig
 
@@ -89,6 +91,22 @@ class S3BlobStore(BlobStore):
         # Could add prefixes for sharding: f"blobs/{blob_id[:2]}/{blob_id}"
         return f"blobs/{blob_id}"
 
+    def _get_metadata_key(self, blob_id: str) -> str:
+        """
+        Get S3 object key for blob metadata (all references)
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            S3 object key for metadata
+        """
+        return f"blobs/{blob_id}.meta"
+
+    def _get_reference_key(self, channel_id: str, uploaded_by: str) -> str:
+        """Generate a unique key for a reference"""
+        return f"{channel_id}:{uploaded_by}"
+
     def _validate_blob_id(self, blob_id: str) -> None:
         """
         Validate that blob_id is a valid typed identifier of BLOB type
@@ -109,40 +127,79 @@ class S3BlobStore(BlobStore):
                 f"blob_id must be BLOB type, got {tid.id_type.name}"
             )
 
-    def add_blob(self, blob_id: str, data: bytes) -> None:
+    def add_blob(self, blob_id: str, data: bytes, channel_id: str, uploaded_by: str) -> None:
         """
-        Store a blob in S3
+        Store a blob with reference counting.
+        Only writes content if blob doesn't exist, but always adds reference.
 
         Args:
             blob_id: Content-addressed identifier for the blob
             data: Raw binary blob data (typically encrypted)
+            channel_id: ID of the channel this blob belongs to
+            uploaded_by: Public key of the user who uploaded this blob
 
         Raises:
             ValueError: If blob_id is invalid or not a BLOB type
-            FileExistsError: If blob already exists
+            FileExistsError: If this exact reference already exists
         """
         # Validate blob_id format and type
         self._validate_blob_id(blob_id)
 
         s3_key = self._get_s3_key(blob_id)
+        metadata_key = self._get_metadata_key(blob_id)
 
-        # Check if blob already exists
+        # Check if blob content exists
+        blob_exists = False
         try:
             self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
-            # If we get here, object exists
-            raise FileExistsError(f"Blob {blob_id} already exists")
+            blob_exists = True
         except self.ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
             if error_code != "404":
-                # Some other error occurred
                 raise
 
-        # Upload blob to S3
+        # Read existing metadata or initialize empty
+        metadata = {"references": {}}
+        if blob_exists:
+            try:
+                response = self.s3_client.get_object(
+                    Bucket=self.bucket_name,
+                    Key=metadata_key
+                )
+                metadata_json = response["Body"].read().decode('utf-8')
+                metadata = json.loads(metadata_json)
+            except self.ClientError:
+                metadata = {"references": {}}
+
+        # Check if this exact reference already exists
+        ref_key = self._get_reference_key(channel_id, uploaded_by)
+        if ref_key in metadata.get("references", {}):
+            raise FileExistsError(
+                f"Blob {blob_id} already has reference from {channel_id}/{uploaded_by}"
+            )
+
+        # Add the new reference
+        metadata["references"][ref_key] = {
+            "channel_id": channel_id,
+            "uploaded_by": uploaded_by,
+            "uploaded_at": int(time.time() * 1000)
+        }
+
+        # Upload blob content only if it doesn't exist
+        if not blob_exists:
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=data,
+                ContentType="application/octet-stream"
+            )
+
+        # Always upload updated metadata
         self.s3_client.put_object(
             Bucket=self.bucket_name,
-            Key=s3_key,
-            Body=data,
-            ContentType="application/octet-stream"
+            Key=metadata_key,
+            Body=json.dumps(metadata),
+            ContentType="application/json"
         )
 
     def get_blob(self, blob_id: str) -> Optional[bytes]:
@@ -169,30 +226,97 @@ class S3BlobStore(BlobStore):
                 return None
             raise
 
-    def delete_blob(self, blob_id: str) -> bool:
+    def get_blob_metadata(self, blob_id: str) -> Optional[BlobMetadata]:
         """
-        Delete a blob from S3
+        Retrieve blob metadata with all references for authorization checks
 
         Args:
             blob_id: Content-addressed identifier for the blob
 
         Returns:
-            True if blob was deleted, False if it didn't exist
+            BlobMetadata with all references if found, None otherwise
         """
-        s3_key = self._get_s3_key(blob_id)
+        metadata_key = self._get_metadata_key(blob_id)
 
-        # Check if object exists first
         try:
-            self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=metadata_key
+            )
+            metadata_json = response["Body"].read().decode('utf-8')
+            metadata = json.loads(metadata_json)
+
+            # Convert references dict to list of BlobReference objects
+            references = [
+                BlobReference(
+                    channel_id=ref_data["channel_id"],
+                    uploaded_by=ref_data["uploaded_by"],
+                    uploaded_at=ref_data["uploaded_at"]
+                )
+                for ref_data in metadata.get("references", {}).values()
+            ]
+
+            if not references:
+                return None
+
+            return BlobMetadata(references=references)
         except self.ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
-            if error_code == "404":
+            if error_code in ("NoSuchKey", "404"):
+                return None
+            raise
+
+    def remove_blob_reference(self, blob_id: str, channel_id: str, uploaded_by: str) -> bool:
+        """
+        Remove a reference to a blob. Deletes blob content if no references remain.
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+            channel_id: ID of the channel removing the reference
+            uploaded_by: Public key of the user who uploaded this reference
+
+        Returns:
+            True if blob content was deleted (no references remain), False otherwise
+        """
+        s3_key = self._get_s3_key(blob_id)
+        metadata_key = self._get_metadata_key(blob_id)
+
+        # Read metadata
+        try:
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=metadata_key
+            )
+            metadata_json = response["Body"].read().decode('utf-8')
+            metadata = json.loads(metadata_json)
+        except self.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code in ("NoSuchKey", "404"):
                 return False
             raise
 
-        # Delete the object
-        self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
-        return True
+        # Remove the reference
+        ref_key = self._get_reference_key(channel_id, uploaded_by)
+        if ref_key not in metadata.get("references", {}):
+            return False
+
+        del metadata["references"][ref_key]
+
+        # Check if any references remain
+        if len(metadata["references"]) == 0:
+            # No references remain - delete blob and metadata
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=metadata_key)
+            return True
+        else:
+            # References remain - update metadata
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=metadata_key,
+                Body=json.dumps(metadata),
+                ContentType="application/json"
+            )
+            return False
 
     def get_upload_url(self, blob_id: str) -> Optional[str]:
         """

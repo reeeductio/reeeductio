@@ -6,10 +6,12 @@ Each blob is stored with its blob_id as the filename.
 """
 
 import os
+import json
+import time
 from pathlib import Path
 from typing import Optional
 
-from blob_store import BlobStore
+from blob_store import BlobStore, BlobMetadata, BlobReference
 from identifiers import decode_identifier, IdType
 
 
@@ -42,6 +44,22 @@ class FilesystemBlobStore(BlobStore):
         """
         return self.blob_dir / blob_id
 
+    def _get_metadata_path(self, blob_id: str) -> Path:
+        """
+        Get the filesystem path for a blob's metadata (all references)
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            Path object for the metadata file
+        """
+        return self.blob_dir / f"{blob_id}.meta"
+
+    def _get_reference_key(self, channel_id: str, uploaded_by: str) -> str:
+        """Generate a unique key for a reference"""
+        return f"{channel_id}:{uploaded_by}"
+
     def _validate_blob_id(self, blob_id: str) -> None:
         """
         Validate that blob_id is a valid typed identifier of BLOB type
@@ -62,38 +80,68 @@ class FilesystemBlobStore(BlobStore):
                 f"blob_id must be BLOB type, got {tid.id_type.name}"
             )
 
-    def add_blob(self, blob_id: str, data: bytes) -> None:
+    def add_blob(self, blob_id: str, data: bytes, channel_id: str, uploaded_by: str) -> None:
         """
-        Store a blob as a file
+        Store a blob with reference counting.
+        Only writes content if blob doesn't exist, but always adds reference.
 
         Args:
             blob_id: Content-addressed identifier for the blob
             data: Raw binary blob data (typically encrypted)
+            channel_id: ID of the channel this blob belongs to
+            uploaded_by: Public key of the user who uploaded this blob
 
         Raises:
             ValueError: If blob_id is invalid or not a BLOB type
-            FileExistsError: If blob already exists
+            FileExistsError: If this exact reference already exists
         """
         # Validate blob_id format and type
         self._validate_blob_id(blob_id)
 
         blob_path = self._get_blob_path(blob_id)
+        metadata_path = self._get_metadata_path(blob_id)
 
-        # Check if blob already exists
-        if blob_path.exists():
+        # Read existing metadata or initialize empty
+        if metadata_path.exists():
+            try:
+                metadata_json = metadata_path.read_text()
+                metadata = json.loads(metadata_json)
+            except Exception:
+                metadata = {"references": {}}
+        else:
+            metadata = {"references": {}}
+
+        # Check if this exact reference already exists
+        ref_key = self._get_reference_key(channel_id, uploaded_by)
+        if ref_key in metadata["references"]:
             raise FileExistsError(
-                f"Blob {blob_id} already exists"
+                f"Blob {blob_id} already has reference from {channel_id}/{uploaded_by}"
             )
 
-        # Write atomically using a temporary file
-        temp_path = blob_path.with_suffix('.tmp')
+        # Add the new reference
+        metadata["references"][ref_key] = {
+            "channel_id": channel_id,
+            "uploaded_by": uploaded_by,
+            "uploaded_at": int(time.time() * 1000)
+        }
+
+        # Write atomically using temporary files
+        temp_meta_path = Path(str(metadata_path) + '.tmp')
+
         try:
-            temp_path.write_bytes(data)
-            temp_path.replace(blob_path)
+            # Write blob content only if it doesn't exist
+            if not blob_path.exists():
+                temp_blob_path = Path(str(blob_path) + '.tmp')
+                temp_blob_path.write_bytes(data)
+                temp_blob_path.replace(blob_path)
+
+            # Always write updated metadata
+            temp_meta_path.write_text(json.dumps(metadata))
+            temp_meta_path.replace(metadata_path)
         except Exception:
-            # Clean up temp file if write failed
-            if temp_path.exists():
-                temp_path.unlink()
+            # Clean up temp files if write failed
+            if temp_meta_path.exists():
+                temp_meta_path.unlink()
             raise
 
     def get_blob(self, blob_id: str) -> Optional[bytes]:
@@ -117,24 +165,87 @@ class FilesystemBlobStore(BlobStore):
             # File may have been deleted between exists() check and read
             return None
 
-    def delete_blob(self, blob_id: str) -> bool:
+    def get_blob_metadata(self, blob_id: str) -> Optional[BlobMetadata]:
         """
-        Delete a blob from the filesystem
+        Retrieve blob metadata with all references for authorization checks
 
         Args:
             blob_id: Content-addressed identifier for the blob
 
         Returns:
-            True if blob was deleted, False if it didn't exist
+            BlobMetadata with all references if found, None otherwise
+        """
+        metadata_path = self._get_metadata_path(blob_id)
+
+        if not metadata_path.exists():
+            return None
+
+        try:
+            metadata_json = metadata_path.read_text()
+            metadata = json.loads(metadata_json)
+
+            # Convert references dict to list of BlobReference objects
+            references = [
+                BlobReference(
+                    channel_id=ref_data["channel_id"],
+                    uploaded_by=ref_data["uploaded_by"],
+                    uploaded_at=ref_data["uploaded_at"]
+                )
+                for ref_data in metadata.get("references", {}).values()
+            ]
+
+            if not references:
+                return None
+
+            return BlobMetadata(references=references)
+        except Exception:
+            # Metadata file may be corrupt or deleted
+            return None
+
+    def remove_blob_reference(self, blob_id: str, channel_id: str, uploaded_by: str) -> bool:
+        """
+        Remove a reference to a blob. Deletes blob content if no references remain.
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+            channel_id: ID of the channel removing the reference
+            uploaded_by: Public key of the user who uploaded this reference
+
+        Returns:
+            True if blob content was deleted (no references remain), False otherwise
         """
         blob_path = self._get_blob_path(blob_id)
+        metadata_path = self._get_metadata_path(blob_id)
 
-        if not blob_path.exists():
+        if not metadata_path.exists():
             return False
 
         try:
-            blob_path.unlink()
-            return True
-        except FileNotFoundError:
-            # File was deleted between exists() check and unlink
+            # Read metadata
+            metadata_json = metadata_path.read_text()
+            metadata = json.loads(metadata_json)
+
+            # Remove the reference
+            ref_key = self._get_reference_key(channel_id, uploaded_by)
+            if ref_key not in metadata.get("references", {}):
+                return False
+
+            del metadata["references"][ref_key]
+
+            # Check if any references remain
+            if len(metadata["references"]) == 0:
+                # No references remain - delete blob and metadata
+                if blob_path.exists():
+                    blob_path.unlink()
+                metadata_path.unlink()
+                return True
+            else:
+                # References remain - update metadata
+                temp_meta_path = Path(str(metadata_path) + '.tmp')
+                temp_meta_path.write_text(json.dumps(metadata))
+                temp_meta_path.replace(metadata_path)
+                return False
+
+        except Exception:
+            # Error reading or updating metadata
             return False
