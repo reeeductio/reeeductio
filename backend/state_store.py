@@ -7,10 +7,23 @@ storing channel state in different backends (SQLite, LMDB, DynamoDB, etc.)
 
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any, Union
+from lru_cache import LRUCache
 
 
 class StateStore(ABC):
     """Abstract base class for state storage backends"""
+
+    def __init__(self):
+        """
+        Initialize the state store.
+
+        Subclasses should call super().__init__() and optionally initialize
+        the cache for local storage backends.
+        """
+        # Optional cache for local storage backends (SQLite, LMDB)
+        # Remote storage backends (DynamoDB, etc.) should leave this as None
+        # to avoid cache coherency issues across multiple application instances
+        self._cache: Optional[LRUCache] = None
 
     @abstractmethod
     def get_state(

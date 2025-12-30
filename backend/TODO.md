@@ -6,7 +6,7 @@
 6. ~~Create a more generic SqlMessageStore that can be a parent of SqliteMessageStore, for future postgres or mysql support~~ ✓
 7. ~~Add support for websocket on /channel/{channel_id}/stream~~ ✓
 8. ~~Add support for loading config from a file and/or environment variables~~ ✓
-9. Investigate adding caching for state and messages - look at functools, or write our own with a dictionary for easier manual update/invalidation
+9. ~~Investigate adding caching for state and messages - look at functools, or write our own with a dictionary for easier manual update/invalidation~~ ✓
 10. Add or integrate OPRF service - look at https://github.com/nthparty/oprf and https://github.com/nthparty/oprfs
 11. Prep for running on AWS Lambda, Cloudflare Workers, Google serverless, etc
 12. ~~Create Dockerfile~~ ✓

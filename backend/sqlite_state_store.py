@@ -10,19 +10,27 @@ import json
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 from state_store import StateStore
+from lru_cache import LRUCache
 
 
 class SqliteStateStore(StateStore):
     """Store channel state in SQLite database"""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, cache_size: int = 1000):
         """
         Initialize SQLite state storage
 
         Args:
             db_path: Path to SQLite database file
+            cache_size: Maximum number of items to cache (default: 1000)
         """
+        super().__init__()
         self.db_path = db_path
+
+        # Initialize LRU cache for local SQLite storage
+        # Safe because SQLite is local to this process
+        self._cache = LRUCache(max_size=cache_size)
+
         self._init_db()
 
     @contextmanager
@@ -71,6 +79,13 @@ class SqliteStateStore(StateStore):
         path: str
     ) -> Optional[Dict[str, Any]]:
         """Get state value by path (data is always returned as base64 string)"""
+        # Check cache if present
+        if self._cache is not None:
+            cache_key = f"state:{channel_id}:{path}"
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -83,11 +98,18 @@ class SqliteStateStore(StateStore):
             if not row:
                 return None
 
-            return {
+            result = {
                 "data": row["data"],
                 "updated_by": row["updated_by"],
                 "updated_at": row["updated_at"]
             }
+
+            # Store in cache if present
+            if self._cache is not None:
+                cache_key = f"state:{channel_id}:{path}"
+                self._cache.set(cache_key, result)
+
+            return result
 
     def set_state(
         self,
@@ -106,6 +128,11 @@ class SqliteStateStore(StateStore):
                 VALUES (?, ?, ?, ?, ?)
             """, (channel_id, path, data, updated_by, updated_at))
 
+        # Invalidate cache if present
+        if self._cache is not None:
+            cache_key = f"state:{channel_id}:{path}"
+            self._cache.pop(cache_key, None)
+
     def delete_state(self, channel_id: str, path: str) -> bool:
         """Delete state value"""
         with self.get_connection() as conn:
@@ -114,7 +141,14 @@ class SqliteStateStore(StateStore):
                 DELETE FROM state
                 WHERE channel_id = ? AND path = ?
             """, (channel_id, path))
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+
+        # Invalidate cache if present
+        if self._cache is not None:
+            cache_key = f"state:{channel_id}:{path}"
+            self._cache.pop(cache_key, None)
+
+        return deleted
 
     def list_state(
         self,
