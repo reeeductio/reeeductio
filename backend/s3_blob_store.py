@@ -9,6 +9,7 @@ import base64
 from typing import Optional
 from blob_store import BlobStore
 from identifiers import decode_identifier, IdType, extract_hash
+from config import S3BlobConfig
 
 try:
     import boto3
@@ -24,12 +25,7 @@ class S3BlobStore(BlobStore):
 
     def __init__(
         self,
-        bucket_name: str,
-        endpoint_url: Optional[str] = None,
-        access_key_id: Optional[str] = None,
-        secret_access_key: Optional[str] = None,
-        region_name: str = "us-east-1",
-        presigned_url_expiration: int = 3600
+        config: S3BlobConfig
     ):
         """
         Initialize S3 blob storage
@@ -42,27 +38,27 @@ class S3BlobStore(BlobStore):
             region_name: AWS region name (default: us-east-1)
             presigned_url_expiration: Pre-signed URL expiration in seconds (default: 3600)
         """
-        self.bucket_name = bucket_name
-        self.presigned_url_expiration = presigned_url_expiration
+        self.bucket_name = config.bucket_name
+        self.presigned_url_expiration = config.presigned_url_expiration
         self.ClientError = ClientError
 
         # Create S3 client
         session_kwargs = {}
-        if access_key_id and secret_access_key:
-            session_kwargs["aws_access_key_id"] = access_key_id
-            session_kwargs["aws_secret_access_key"] = secret_access_key
+        if config.access_key_id and config.secret_access_key:
+            session_kwargs["aws_access_key_id"] = config.access_key_id
+            session_kwargs["aws_secret_access_key"] = config.secret_access_key
 
         session = boto3.Session(**session_kwargs)
 
         # Create S3 client with appropriate configuration
-        if endpoint_url:
+        if config.endpoint_url:
             self.s3_client = session.client(
                 "s3",
-                region_name=region_name,
-                endpoint_url=endpoint_url
+                region_name=config.region_name,
+                endpoint_url=config.endpoint_url
             )
         else:
-            self.s3_client = session.client("s3", region_name=region_name)
+            self.s3_client = session.client("s3", region_name=config.region_name)
 
         # Ensure bucket exists
         self._ensure_bucket_exists()

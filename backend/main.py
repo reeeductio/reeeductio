@@ -56,18 +56,11 @@ security = HTTPBearer()
 
 # Initialize blob store based on configuration
 if config.blob_store.type == "filesystem":
-    blob_store = FilesystemBlobStore(config.blob_store.filesystem_path)
+    blob_store = FilesystemBlobStore(config.blob_store.path)
 elif config.blob_store.type == "s3":
-    blob_store = S3BlobStore(
-        bucket_name=config.blob_store.s3_bucket_name,
-        endpoint_url=config.blob_store.s3_endpoint_url,
-        access_key_id=config.blob_store.s3_access_key_id,
-        secret_access_key=config.blob_store.s3_secret_access_key,
-        region_name=config.blob_store.s3_region_name,
-        presigned_url_expiration=config.blob_store.s3_presigned_url_expiration
-    )
+    blob_store = S3BlobStore(config.blob_store)
 elif config.blob_store.type == "sqlite":
-    blob_store = SqliteBlobStore(config.blob_store.sqlite_db_path)
+    blob_store = SqliteBlobStore(config.blob_store.db_path)
 else:
     raise ValueError(f"Unsupported blob store type: {config.blob_store.type}")
 

@@ -8,77 +8,63 @@ Supports loading configuration from:
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
-from typing import Literal, Optional
+from pydantic import BaseModel, Field, Discriminator
+from typing import Annotated, Literal, Optional, Union
 from pathlib import Path
 import os
 
 
-class BlobStoreConfig(BaseSettings):
-    """Configuration for blob storage backend"""
-
-    # Storage type: "filesystem", "s3", or "sqlite"
-    type: Literal["filesystem", "s3", "sqlite"] = Field(
-        default="filesystem",
-        description="Type of blob storage to use"
-    )
-
-    # Filesystem blob storage settings
-    filesystem_path: str = Field(
+class FilesystemBlobConfig(BaseModel):
+    """Filesystem blob storage configuration"""
+    type: Literal["filesystem"] = "filesystem"
+    path: str = Field(
         default="blobs",
         description="Directory path for filesystem blob storage"
     )
 
-    # S3 blob storage settings
-    s3_bucket_name: Optional[str] = Field(
-        default=None,
-        description="S3 bucket name for blob storage"
+
+class S3BlobConfig(BaseModel):
+    """S3 blob storage configuration"""
+    type: Literal["s3"] = "s3"
+    bucket_name: str = Field(
+        description="S3 bucket name"
     )
-    s3_endpoint_url: Optional[str] = Field(
+    endpoint_url: Optional[str] = Field(
         default=None,
-        description="Custom S3 endpoint URL (for MinIO, etc.)"
+        description="Custom S3 endpoint URL (for MinIO, etc)"
     )
-    s3_access_key_id: Optional[str] = Field(
+    access_key_id: Optional[str] = Field(
         default=None,
         description="S3 access key ID"
     )
-    s3_secret_access_key: Optional[str] = Field(
+    secret_access_key: Optional[str] = Field(
         default=None,
         description="S3 secret access key"
     )
-    s3_region_name: str = Field(
+    region_name: str = Field(
         default="us-east-1",
         description="S3 region name"
     )
-    s3_presigned_url_expiration: int = Field(
+    presigned_url_expiration: int = Field(
         default=3600,
         description="Pre-signed URL expiration in seconds"
     )
 
-    # SQLite blob storage settings
-    sqlite_db_path: str = Field(
+
+class SqliteBlobConfig(BaseModel):
+    """SQLite blob storage configuration"""
+    type: Literal["sqlite"] = "sqlite"
+    db_path: str = Field(
         default="blobs.db",
         description="SQLite database path for blob storage"
     )
 
-    @field_validator("type")
-    @classmethod
-    def validate_storage_type(cls, v: str) -> str:
-        """Validate storage type"""
-        if v not in ["filesystem", "s3", "sqlite"]:
-            raise ValueError(f"Invalid blob storage type: {v}")
-        return v
 
-    def validate_s3_config(self) -> None:
-        """Validate S3 configuration if S3 storage is selected"""
-        if self.type == "s3":
-            if not self.s3_bucket_name:
-                raise ValueError("s3_bucket_name is required when using S3 storage")
-
-    model_config = SettingsConfigDict(
-        env_prefix="BLOB_",
-        env_nested_delimiter="__"
-    )
+# Discriminated union of blob storage configs
+BlobStoreConfig = Annotated[
+    Union[FilesystemBlobConfig, S3BlobConfig, SqliteBlobConfig],
+    Discriminator("type")
+]
 
 
 class DatabaseConfig(BaseSettings):
@@ -151,7 +137,7 @@ class AppConfig(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
 
     # Blob storage configuration
-    blob_store: BlobStoreConfig = Field(default_factory=BlobStoreConfig)
+    blob_store: BlobStoreConfig = Field(default_factory=lambda: FilesystemBlobConfig())
 
     # Environment (for logging/debugging)
     environment: Literal["development", "production", "test"] = Field(
@@ -208,7 +194,16 @@ class AppConfig(BaseSettings):
         if "database" in data and isinstance(data["database"], dict):
             data["database"] = DatabaseConfig(**data["database"])
         if "blob_store" in data and isinstance(data["blob_store"], dict):
-            data["blob_store"] = BlobStoreConfig(**data["blob_store"])
+            blob_data = data["blob_store"]
+            storage_type = blob_data.get("type", "filesystem")
+            if storage_type == "filesystem":
+                data["blob_store"] = FilesystemBlobConfig(**blob_data)
+            elif storage_type == "s3":
+                data["blob_store"] = S3BlobConfig(**blob_data)
+            elif storage_type == "sqlite":
+                data["blob_store"] = SqliteBlobConfig(**blob_data)
+            else:
+                raise ValueError(f"Invalid blob storage type: {storage_type}")
 
         return cls(**data)
 
@@ -234,13 +229,10 @@ class AppConfig(BaseSettings):
             config = cls(
                 server=ServerConfig(),
                 database=DatabaseConfig(),
-                blob_store=BlobStoreConfig()
+                blob_store=FilesystemBlobConfig()
             )
 
         # Environment variables will override due to pydantic-settings behavior
-        # Validate blob store configuration
-        config.blob_store.validate_s3_config()
-
         return config
 
 
