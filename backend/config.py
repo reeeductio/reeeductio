@@ -121,6 +121,16 @@ class ServerConfig(BaseSettings):
         description="Authentication challenge expiry in seconds"
     )
 
+    max_message_size: int = Field(
+        default=102_400,
+        description="Maximum message size in bytes (100 KB default)"
+    )
+
+    max_blob_size: int = Field(
+        default=104_857_600,
+        description="Maximum blob size in bytes (100 MB default)"
+    )
+
     model_config = SettingsConfigDict(
         env_prefix="SERVER_",
         env_nested_delimiter="__"

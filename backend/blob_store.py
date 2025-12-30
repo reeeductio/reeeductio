@@ -134,12 +134,13 @@ class BlobStore(ABC):
         """
         pass
 
-    def get_upload_url(self, blob_id: str) -> Optional[str]:
+    def get_upload_url(self, blob_id: str, max_size: Optional[int] = None) -> Optional[str]:
         """
         Get a pre-signed URL for uploading a blob (optional, for S3-compatible backends)
 
         Args:
             blob_id: Content-addressed identifier for the blob
+            max_size: Maximum allowed size in bytes (enforced in presigned URL if supported)
 
         Returns:
             Pre-signed URL for upload, or None if direct upload not supported

@@ -366,7 +366,8 @@ paths:
                 encrypted_payload:
                   type: string
                   format: base64
-                  description: Encrypted message content
+                  maxLength: 102400
+                  description: Encrypted message content (max 100 KB)
                 message_hash:
                   type: string
                   pattern: '^[A-Za-z0-9_-]{44}$'
@@ -504,6 +505,7 @@ paths:
             schema:
               type: string
               format: binary
+              maxLength: 104857600
       responses:
         '201':
           description: Blob uploaded successfully (direct upload to server)
@@ -544,7 +546,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '413':
-          description: Blob too large
+          description: Blob too large (max 100 MB)
           content:
             application/json:
               schema:
@@ -682,7 +684,8 @@ components:
         encrypted_payload:
           type: string
           format: base64
-          description: Encrypted message content
+          maxLength: 102400
+          description: Encrypted message content (max 100 KB)
         sender:
           type: string
           pattern: '^[A-Za-z0-9_-]{44}$'

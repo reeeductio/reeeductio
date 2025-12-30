@@ -294,7 +294,7 @@ class S3BlobStore(BlobStore):
             )
             return False
 
-    def get_upload_url(self, blob_id: str) -> Optional[str]:
+    def get_upload_url(self, blob_id: str, max_size: Optional[int] = None) -> Optional[str]:
         """
         Get a pre-signed URL for uploading a blob to S3 with SHA256 checksum enforcement
 
@@ -302,8 +302,15 @@ class S3BlobStore(BlobStore):
         when uploading, ensuring data integrity. The client must include the
         'x-amz-checksum-sha256' header with the base64-encoded SHA256 hash.
 
+        Note: S3 presigned PUT URLs cannot enforce content-length restrictions directly.
+        Size limits must be enforced client-side or via S3 bucket policies. The max_size
+        parameter is accepted for interface compatibility but not enforced in the URL.
+        Consider implementing S3 Object Lambda or bucket size policies for server-side
+        enforcement.
+
         Args:
             blob_id: Content-addressed identifier for the blob
+            max_size: Maximum allowed size in bytes (not enforced in presigned URL)
 
         Returns:
             Pre-signed URL for PUT upload with checksum enforcement
@@ -327,15 +334,24 @@ class S3BlobStore(BlobStore):
         hash_bytes = extract_hash(blob_id)
         checksum_sha256 = base64.b64encode(hash_bytes).decode('ascii')
 
+        params = {
+            "Bucket": self.bucket_name,
+            "Key": s3_key,
+            "ContentType": "application/octet-stream",
+            "ChecksumSHA256": checksum_sha256
+        }
+
+        # Note: max_size cannot be enforced in S3 presigned PUT URLs
+        # Size enforcement must be done via:
+        # 1. Client-side validation before upload
+        # 2. S3 bucket policies with size limits
+        # 3. S3 Object Lambda for request filtering
+        # 4. Server-side validation when metadata is added via add_blob()
+
         # Generate pre-signed URL for PUT with checksum enforcement
         presigned_url = self.s3_client.generate_presigned_url(
             ClientMethod="put_object",
-            Params={
-                "Bucket": self.bucket_name,
-                "Key": s3_key,
-                "ContentType": "application/octet-stream",
-                "ChecksumSHA256": checksum_sha256
-            },
+            Params=params,
             ExpiresIn=self.presigned_url_expiration
         )
 

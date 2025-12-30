@@ -8,7 +8,7 @@ A capability-based, end-to-end encrypted messaging system with:
 - Zero-knowledge server design
 """
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Query, Path as PathParam, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Depends, Header, Query, Path as PathParam, WebSocket, WebSocketDisconnect, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, Field
@@ -115,7 +115,7 @@ class StateResponse(BaseModel):
 
 class MessagePost(BaseModel):
     prev_hash: Optional[str] = Field(None, description="SHA256 of previous message")
-    encrypted_payload: str = Field(..., description="Base64-encoded encrypted content")
+    encrypted_payload: str = Field(..., description="Base64-encoded encrypted content", max_length=102_400)
     message_hash: str = Field(..., description="SHA256 hash of this message")
     signature: str = Field(..., description="Base64-encoded Ed25519 signature over message_hash")
 
@@ -392,7 +392,7 @@ async def get_message_by_hash(
 async def upload_blob(
     channel_id: str,
     blob_id: str,
-    request: bytes = Depends(lambda: None),  # Will be overridden by actual request body
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Upload an encrypted blob with explicit blob_id"""
@@ -404,8 +404,11 @@ async def upload_blob(
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
 
+    # Get max blob size from config
+    max_blob_size = config.server.max_blob_size
+
     # Check if blob store supports pre-signed URLs
-    upload_url = blob_store.get_upload_url(blob_id)
+    upload_url = blob_store.get_upload_url(blob_id, max_size=max_blob_size)
     if upload_url:
         # Authorize before returning pre-signed URL
         try:
@@ -413,18 +416,38 @@ async def upload_blob(
         except ValueError as e:
             raise HTTPException(status_code=403, detail=str(e))
 
+        # Note: For S3 presigned URLs, size limit cannot be enforced in the URL itself.
+        # Clients should validate size before upload. Size will be checked when metadata
+        # is added via add_blob() or via S3 bucket policies.
+
         # Redirect client to upload directly to S3
         return RedirectResponse(
             url=upload_url,
             status_code=307  # Temporary redirect, preserving method (PUT)
         )
 
-    # Direct upload to server - read request body
-    blob_data = request
+    # Direct upload to server - read request body with size limit
+    content_length = request.headers.get("content-length")
+
+    if content_length and int(content_length) > max_blob_size:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Blob too large. Maximum size is {max_blob_size} bytes ({max_blob_size // (1024*1024)} MB)"
+        )
+
+    # Read body in chunks to enforce size limit
+    blob_data = bytearray()
+    async for chunk in request.stream():
+        blob_data.extend(chunk)
+        if len(blob_data) > max_blob_size:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Blob too large. Maximum size is {max_blob_size} bytes ({max_blob_size // (1024*1024)} MB)"
+            )
 
     # Use Channel method for upload (handles authorization, validation, and storage)
     try:
-        result = channel.upload_blob(user_id, credentials.credentials, blob_id, blob_data)
+        result = channel.upload_blob(user_id, credentials.credentials, blob_id, bytes(blob_data))
         return BlobUploadResponse(**result)
     except FileExistsError:
         raise HTTPException(status_code=409, detail="Blob already exists")

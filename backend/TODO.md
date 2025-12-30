@@ -12,4 +12,4 @@
 12. ~~Create Dockerfile~~ ✓
 13. ~~Think about moving each channel to use its own embedded databases~~  ✓
 14. ~~Require SHA256 checksum on signed url uploads~~ ✓
-15. Add size limits for messages and blobs
+15. ~~Add size limits for messages and blobs~~ ✓
