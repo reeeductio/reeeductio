@@ -67,25 +67,37 @@ BlobStoreConfig = Annotated[
 ]
 
 
-class DatabaseConfig(BaseSettings):
-    """Configuration for database storage"""
-
-    # State database path
+class SqliteDatabaseConfig(BaseModel):
+    """SQLite database configuration"""
+    type: Literal["sqlite"] = "sqlite"
     state_db_path: str = Field(
         default="state.db",
         description="SQLite database path for state storage"
     )
-
-    # Message database path
     message_db_path: str = Field(
         default="messages.db",
         description="SQLite database path for message storage"
     )
 
-    model_config = SettingsConfigDict(
-        env_prefix="DB_",
-        env_nested_delimiter="__"
+
+class FirestoreDatabaseConfig(BaseModel):
+    """Firestore database configuration"""
+    type: Literal["firestore"] = "firestore"
+    project_id: Optional[str] = Field(
+        default=None,
+        description="GCP project ID (uses default credentials if not provided)"
     )
+    database_id: str = Field(
+        default="(default)",
+        description="Firestore database ID"
+    )
+
+
+# Discriminated union of database configs
+DatabaseConfig = Annotated[
+    Union[SqliteDatabaseConfig, FirestoreDatabaseConfig],
+    Discriminator("type")
+]
 
 
 class ServerConfig(BaseSettings):
@@ -144,7 +156,7 @@ class AppConfig(BaseSettings):
     server: ServerConfig = Field(default_factory=ServerConfig)
 
     # Database configuration
-    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    database: DatabaseConfig = Field(default_factory=lambda: SqliteDatabaseConfig())
 
     # Blob storage configuration
     blob_store: BlobStoreConfig = Field(default_factory=lambda: FilesystemBlobConfig())
@@ -201,8 +213,17 @@ class AppConfig(BaseSettings):
         # Create nested config objects
         if "server" in data and isinstance(data["server"], dict):
             data["server"] = ServerConfig(**data["server"])
+
         if "database" in data and isinstance(data["database"], dict):
-            data["database"] = DatabaseConfig(**data["database"])
+            db_data = data["database"]
+            db_type = db_data.get("type", "sqlite")
+            if db_type == "sqlite":
+                data["database"] = SqliteDatabaseConfig(**db_data)
+            elif db_type == "firestore":
+                data["database"] = FirestoreDatabaseConfig(**db_data)
+            else:
+                raise ValueError(f"Invalid database type: {db_type}")
+
         if "blob_store" in data and isinstance(data["blob_store"], dict):
             blob_data = data["blob_store"]
             storage_type = blob_data.get("type", "filesystem")
@@ -238,7 +259,7 @@ class AppConfig(BaseSettings):
             # Load from environment variables and defaults
             config = cls(
                 server=ServerConfig(),
-                database=DatabaseConfig(),
+                database=SqliteDatabaseConfig(),
                 blob_store=FilesystemBlobConfig()
             )
 

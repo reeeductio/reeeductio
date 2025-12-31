@@ -87,6 +87,7 @@ class MessageStore(ABC):
     def get_message_by_hash(
         self,
         channel_id: str,
+        topic_id: str,
         message_hash: str
     ) -> Optional[Dict[str, Any]]:
         """
@@ -94,6 +95,7 @@ class MessageStore(ABC):
 
         Args:
             channel_id: Channel identifier
+            topic_id: Topic identifier within the channel
             message_hash: Content-addressed hash of the message
 
         Returns:

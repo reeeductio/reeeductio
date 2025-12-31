@@ -412,13 +412,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /channels/{channel_id}/messages/{message_hash}:
+  /channels/{channel_id}/topics/{topic_id}/messages/{message_hash}:
     get:
       tags: [Messages]
-      summary: Get specific message by hash
-      description: Retrieve a single message from any topic in the channel
+      summary: Get specific message by hash from a topic
+      description: Retrieve a single message from a specific topic using its content hash
       parameters:
         - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/TopicId'
         - name: message_hash
           in: path
           required: true
@@ -427,7 +428,7 @@ paths:
             pattern: '^[A-Za-z0-9_-]{44}$'
             minLength: 44
             maxLength: 44
-          description: Typed message identifier
+          description: Typed message identifier (SHA256 hash with header)
       security:
         - BearerAuth: []
       responses:

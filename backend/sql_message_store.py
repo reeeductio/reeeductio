@@ -186,12 +186,13 @@ class SqlMessageStore(MessageStore):
     def get_message_by_hash(
         self,
         channel_id: str,
+        topic_id: str,
         message_hash: str
     ) -> Optional[Dict[str, Any]]:
         """Get a specific message by its hash"""
         # Check cache if present
         if self._cache is not None:
-            cache_key = f"message:{channel_id}:{message_hash}"
+            cache_key = f"message:{channel_id}:{topic_id}:{message_hash}"
             cached = self._cache.get(cache_key)
             if cached is not None:
                 return cached
@@ -204,8 +205,8 @@ class SqlMessageStore(MessageStore):
                 SELECT message_hash, topic_id, prev_hash,
                        encrypted_payload, sender, signature, server_timestamp
                 FROM messages
-                WHERE channel_id = {ph(0)} AND message_hash = {ph(1)}
-            """, (channel_id, message_hash))
+                WHERE channel_id = {ph(0)} AND topic_id = {ph(1)} AND message_hash = {ph(2)}
+            """, (channel_id, topic_id, message_hash))
 
             row = cursor.fetchone()
             if not row:
@@ -223,7 +224,7 @@ class SqlMessageStore(MessageStore):
 
             # Store in cache if present
             if self._cache is not None:
-                cache_key = f"message:{channel_id}:{message_hash}"
+                cache_key = f"message:{channel_id}:{topic_id}:{message_hash}"
                 self._cache.set(cache_key, result)
 
             return result

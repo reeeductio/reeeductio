@@ -10,13 +10,12 @@ message handling, and WebSocket connections. It's designed to be:
 
 import asyncio
 import time
-from pathlib import Path
 from typing import Optional, List, Dict, Any, Set
 from fastapi import WebSocket
 import json
 
-from sqlite_state_store import SqliteStateStore
-from sqlite_message_store import SqliteMessageStore
+from state_store import StateStore
+from message_store import MessageStore
 from crypto import CryptoUtils
 from blob_store import BlobStore
 from authorization import AuthorizationEngine
@@ -44,9 +43,8 @@ class Channel:
     def __init__(
         self,
         channel_id: str,
-        storage_dir: Optional[str] = None,
-        state_store: Optional[SqliteStateStore] = None,
-        message_store: Optional[SqliteMessageStore] = None,
+        state_store: StateStore,
+        message_store: MessageStore,
         blob_store: Optional[BlobStore] = None,
         jwt_secret: Optional[str] = None,
         jwt_algorithm: str = "HS256",
@@ -57,36 +55,22 @@ class Channel:
 
         Args:
             channel_id: Unique channel identifier
-            storage_dir: Directory for this channel's databases (if not providing stores)
-            state_store: Optional pre-configured state store
-            message_store: Optional pre-configured message store
+            state_store: State store instance for this channel
+            message_store: Message store instance for this channel
             blob_store: Optional blob store (shared across channels for deduplication)
             jwt_secret: JWT signing secret (shared across all channels for consistency)
             jwt_algorithm: JWT signing algorithm
             jwt_expiry_hours: JWT token expiry in hours
         """
         self.channel_id = channel_id
+        self.state_store = state_store
+        self.message_store = message_store
         self.blob_store = blob_store
 
         # JWT configuration
         self.jwt_secret = jwt_secret
         self.jwt_algorithm = jwt_algorithm
         self.jwt_expiry_hours = jwt_expiry_hours
-
-        # Initialize or use provided stores
-        if state_store and message_store:
-            self.state_store = state_store
-            self.message_store = message_store
-        else:
-            # Create per-channel databases
-            if storage_dir is None:
-                storage_dir = f"channels/ch_{channel_id}"
-
-            storage_path = Path(storage_dir)
-            storage_path.mkdir(parents=True, exist_ok=True)
-
-            self.state_store = SqliteStateStore(str(storage_path / "state.db"))
-            self.message_store = SqliteMessageStore(str(storage_path / "messages.db"))
 
         # Initialize crypto and authorization
         self.crypto = CryptoUtils()
@@ -538,11 +522,12 @@ class Channel:
             limit
         )
 
-    def get_message_by_hash(self, message_hash: str, token: str) -> Dict[str, Any]:
+    def get_message_by_hash(self, topic_id: str, message_hash: str, token: str) -> Dict[str, Any]:
         """
         Get a specific message by hash with authentication and permission check.
 
         Args:
+            topic_id: Topic identifier
             message_hash: Message hash
             token: JWT authentication token
 
@@ -555,14 +540,14 @@ class Channel:
         # Authenticate
         user = self.authenticate_request(token)
 
+        # Check read permission for the topic (before DB query for better security)
+        if not self.check_permission(user["public_key"], "read", f"topics/{topic_id}/messages/"):
+            raise ValueError("No read permission")
+
         # Get message
-        message = self.message_store.get_message_by_hash(self.channel_id, message_hash)
+        message = self.message_store.get_message_by_hash(self.channel_id, topic_id, message_hash)
         if not message:
             raise ValueError("Message not found")
-
-        # Check read permission for the message's topic
-        if not self.check_permission(user["public_key"], "read", f"topics/{message['topic_id']}/messages/"):
-            raise ValueError("No read permission")
 
         return message
 

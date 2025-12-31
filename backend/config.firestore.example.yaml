@@ -1,0 +1,27 @@
+# Example configuration for using Google Cloud Firestore
+# Copy to config.yaml and customize for your deployment
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  jwt_secret: "your-secret-key-change-this-in-production"
+  jwt_algorithm: "HS256"
+  jwt_expiry_hours: 24
+  challenge_expiry_seconds: 300
+  max_message_size: 102400  # 100 KB
+  max_blob_size: 104857600  # 100 MB
+
+database:
+  type: firestore
+  # project_id: my-gcp-project  # Optional - uses default credentials if omitted
+  database_id: "(default)"      # Firestore database ID
+
+blob_store:
+  type: gcs  # Google Cloud Storage (to be implemented)
+  bucket_name: channel-blobs
+  # Or use filesystem for development:
+  # type: filesystem
+  # path: blobs
+
+environment: production
+debug: false

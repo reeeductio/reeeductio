@@ -6,8 +6,13 @@ for cross-instance WebSocket broadcasting.
 """
 
 import threading
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Dict, Optional, Callable
 from channel import Channel
+from state_store import StateStore
+from message_store import MessageStore
+from sqlite_state_store import SqliteStateStore
+from sqlite_message_store import SqliteMessageStore
 from blob_store import BlobStore
 from lru_cache import LRUCache
 
@@ -28,6 +33,8 @@ class ChannelManager:
         base_storage_dir: str = "channels",
         max_cached_channels: int = 1000,
         redis_client=None,  # Optional: redis.Redis() instance
+        state_store_factory: Optional[Callable[[], StateStore]] = None,
+        message_store_factory: Optional[Callable[[], MessageStore]] = None,
         blob_store: Optional[BlobStore] = None,
         jwt_secret: Optional[str] = None,
         jwt_algorithm: str = "HS256",
@@ -37,9 +44,11 @@ class ChannelManager:
         Initialize the channel manager.
 
         Args:
-            base_storage_dir: Base directory for channel storage
+            base_storage_dir: Base directory for channel storage (used with SQLite)
             max_cached_channels: Maximum number of channels to keep in memory
             redis_client: Optional Redis client for pub/sub (set to None if using consistent hashing)
+            state_store_factory: Optional factory function () -> StateStore (for global stores like Firestore)
+            message_store_factory: Optional factory function () -> MessageStore (for global stores like Firestore)
             blob_store: Optional blob storage backend (shared across all channels)
             jwt_secret: JWT signing secret (shared across all channels)
             jwt_algorithm: JWT signing algorithm
@@ -48,6 +57,8 @@ class ChannelManager:
         self.base_storage_dir = base_storage_dir
         self.max_cached_channels = max_cached_channels
         self.redis_client = redis_client
+        self.state_store_factory = state_store_factory
+        self.message_store_factory = message_store_factory
         self.blob_store = blob_store
 
         # JWT configuration (shared across all channels)
@@ -81,11 +92,25 @@ class ChannelManager:
             if cached_channel is not None:
                 return cached_channel
 
-            # Create new channel instance
-            storage_dir = f"{self.base_storage_dir}/ch_{channel_id}"
+            # Create stores for this channel
+            if self.state_store_factory and self.message_store_factory:
+                # Use provided factories (e.g., Firestore - shared global stores)
+                state_store = self.state_store_factory()
+                message_store = self.message_store_factory()
+            else:
+                # Default: per-channel SQLite databases
+                storage_dir = f"{self.base_storage_dir}/ch_{channel_id}"
+                storage_path = Path(storage_dir)
+                storage_path.mkdir(parents=True, exist_ok=True)
+
+                state_store = SqliteStateStore(str(storage_path / "state.db"))
+                message_store = SqliteMessageStore(str(storage_path / "messages.db"))
+
+            # Create channel instance
             channel = Channel(
                 channel_id=channel_id,
-                storage_dir=storage_dir,
+                state_store=state_store,
+                message_store=message_store,
                 blob_store=self.blob_store,
                 jwt_secret=self.jwt_secret,
                 jwt_algorithm=self.jwt_algorithm,

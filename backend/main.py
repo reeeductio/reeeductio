@@ -19,10 +19,12 @@ import secrets
 import jwt
 
 from crypto import CryptoUtils
-from config import get_config
+from config import get_config, FirestoreDatabaseConfig
 from s3_blob_store import S3BlobStore
 from sqlite_blob_store import SqliteBlobStore
 from filesystem_blob_store import FilesystemBlobStore
+from firestore_state_store import FirestoreStateStore
+from firestore_message_store import FirestoreMessageStore
 from channel_manager import ChannelManager
 
 # Load configuration
@@ -50,10 +52,25 @@ elif config.blob_store.type == "sqlite":
 else:
     raise ValueError(f"Unsupported blob store type: {config.blob_store.type}")
 
+# Initialize store factories based on database config
+state_store_factory = None
+message_store_factory = None
+
+if isinstance(config.database, FirestoreDatabaseConfig):
+    # Firestore: create factories that return shared store instances
+    project_id = config.database.project_id
+    database_id = config.database.database_id
+
+    state_store_factory = lambda: FirestoreStateStore(project_id, database_id)
+    message_store_factory = lambda: FirestoreMessageStore(project_id, database_id)
+# else: SQLite (default) - ChannelManager creates per-channel stores
+
 # Initialize components
 channel_manager = ChannelManager(
     base_storage_dir="channels",
     max_cached_channels=1000,
+    state_store_factory=state_store_factory,
+    message_store_factory=message_store_factory,
     blob_store=blob_store,
     jwt_secret=JWT_SECRET,
     jwt_algorithm=JWT_ALGORITHM,
@@ -362,17 +379,18 @@ async def post_message(
             raise HTTPException(status_code=401, detail=error_msg)
 
 
-@app.get("/channels/{channel_id}/messages/{message_hash}", response_model=Message)
+@app.get("/channels/{channel_id}/topics/{topic_id}/messages/{message_hash}", response_model=Message)
 async def get_message_by_hash(
     channel_id: str,
+    topic_id: str,
     message_hash: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Get a specific message by its hash"""
+    """Get a specific message by its hash from a topic"""
     channel = channel_manager.get_channel(channel_id)
 
     try:
-        message = channel.get_message_by_hash(message_hash, credentials.credentials)
+        message = channel.get_message_by_hash(topic_id, message_hash, credentials.credentials)
         return Message(**message)
     except ValueError as e:
         error_msg = str(e)
