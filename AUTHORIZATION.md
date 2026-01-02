@@ -67,7 +67,7 @@ This is parallel to user storage:
 * User capabilities: `auth/users/{user_public_key}/rights/{cap_id}`
 
 The key differences between tools and users are:
-1. **No ambient authority** - Tools ONLY have the capabilities explicitly granted in `auth/tools/{id}/rights/`. They cannot read messages, cannot authenticate via challenge/verify, etc.
+1. **No ambient authority** - Tools ONLY have the capabilities explicitly granted in `auth/tools/{id}/rights/`. They cannot read messages, access user data, or perform any actions without explicit capabilities. However, tools CAN authenticate via challenge/verify to obtain JWT tokens for making API requests (e.g., security camera uploading photos).
 2. **Use-count limiting** - Tools can have a `use_limit` field that decrements with each use
 3. **Expiration** - Tools can have an `expires_at` timestamp for auto-revocation
 
@@ -91,13 +91,13 @@ Arbitrary capability grants don't work as well because:
 ```
 // Role definition
 auth/roles/camera → {"role_id": "camera", "description": "Upload photos only"}
-auth/roles/camera/rights/cap_001 → {"op": "create", "path": "photos/", ...}
+auth/roles/camera/rights/cap_001 → {"op": "create", "path": "photos/{...}", ...}
 
 // Tool definition
 auth/tools/T_camera_tool → {"tool_id": "T_camera_tool", "use_limit": 50, ...}
 
 // Tool's capabilities
-auth/tools/T_camera_tool/rights/cap_001 → {"op": "create", "path": "auth/users/"}
+auth/tools/T_camera_tool/rights/cap_001 → {"op": "create", "path": "auth/users/{any}"}
 auth/tools/T_camera_tool/rights/cap_002 → {"op": "create", "path": "auth/users/{any}/roles/camera"}
 ```
 
@@ -142,12 +142,34 @@ This prevents privilege escalation through tool creation.
 
 **Capability path patterns** (for permission grants) can additionally use wildcards:
 - `{self}` - Resolves to the acting user's public key
-- `{any}` - Matches any single segment  
-- Trailing `/` - Indicates prefix match
-- Examples: `profiles/{self}/`, `topics/{any}/messages/`, `auth/users/{self}/roles/`
+- `{any}` - Matches exactly one path segment at that position
+- `{other}` - Matches any segment except the acting user's public key
+- `{...}` - Matches any remaining segments at any depth (rest wildcard)
+
+**Exact Depth vs Prefix Matching:**
+
+Without `{...}`, patterns require exact depth matching:
+- `auth/users/{any}` matches `auth/users/U_alice` ✅
+- `auth/users/{any}` DOES NOT match `auth/users/U_alice/roles/admin` ❌ (too many segments)
+- `topics/{any}/messages` matches `topics/general/messages` ✅
+- `topics/{any}/messages` DOES NOT match `topics/general/messages/msg1` ❌
+
+With `{...}`, patterns match any depth from that point forward:
+- `{...}` matches ANY path at ANY depth (global wildcard)
+- `auth/users/{...}` matches `auth/users/U_alice` ✅
+- `auth/users/{...}` matches `auth/users/U_alice/roles/admin` ✅
+- `topics/{any}/messages/{...}` matches `topics/general/messages/msg1` ✅
+- `topics/{any}/messages/{...}` matches `topics/general/messages/msg1/replies/reply2` ✅
+
+**Examples:**
+- `profiles/{self}` - Can ONLY access your own profile entry (exact depth)
+- `profiles/{self}/{...}` - Can access everything under your profile at any depth
+- `topics/{any}/messages/{...}` - Can access messages in any topic at any depth
+- `auth/users/{other}/banned` - Can write to other users' banned flag (exact depth)
+- `auth/roles/{any}/rights/{...}` - Can manage all rights for any role at any depth
 
 **Forbidden in user paths:**
-- Reserved wildcards: `{self}`, `{any}`, `{other}`
+- Reserved wildcards: `{self}`, `{any}`, `{other}`, `{...}`
 - Any braced expressions: `{foo}`, `{id}`, etc.
 - Special characters: spaces, quotes, backslashes, etc.
 

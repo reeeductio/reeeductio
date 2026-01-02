@@ -47,7 +47,7 @@ def channel_with_roles(temp_db_path, admin_keypair):
     # Add capabilities to "user" role
     user_read_cap = {
         "op": "read",
-        "path": "{any}",
+        "path": "{...}",  # Can read anything at any depth
         "granted_by": admin_id,
         "granted_at": 1234567890
     }
@@ -67,7 +67,7 @@ def channel_with_roles(temp_db_path, admin_keypair):
 
     user_post_cap = {
         "op": "create",
-        "path": "topics/{any}/messages/",
+        "path": "topics/{any}/messages/{...}",  # Can create messages at any depth under topics
         "granted_by": admin_id,
         "granted_at": 1234567890
     }

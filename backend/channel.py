@@ -90,10 +90,10 @@ class Channel:
 
     def create_challenge(self, public_key: str, expiry_seconds: int = 300) -> Dict[str, Any]:
         """
-        Create an authentication challenge for a user.
+        Create an authentication challenge for a user or tool.
 
         Args:
-            public_key: User's public key identifier
+            public_key: User or tool public key identifier (U_* or T_*)
             expiry_seconds: Challenge validity in seconds
 
         Returns:
@@ -123,8 +123,12 @@ class Channel:
         """
         Verify a signed challenge for authentication.
 
+        Works for both users (U_*) and tools (T_*). Tools can authenticate
+        to make API requests, but their permissions are still limited by
+        their capabilities (no ambient authority).
+
         Args:
-            public_key: User's public key identifier
+            public_key: User or tool public key identifier (U_* or T_*)
             challenge: The challenge string to verify
             signature: Base64-encoded signature of the challenge
 
@@ -174,10 +178,13 @@ class Channel:
 
     def create_jwt(self, public_key: str) -> dict:
         """
-        Create a JWT token for an authenticated user.
+        Create a JWT token for an authenticated user or tool.
+
+        Tools can authenticate to make API requests (e.g., uploading photos),
+        but their permissions are still limited by their capabilities.
 
         Args:
-            public_key: User's public key identifier
+            public_key: User or tool public key identifier (U_* or T_*)
 
         Returns:
             Dictionary with token and expires_at (in milliseconds)
@@ -643,9 +650,27 @@ class Channel:
         return self.authz.is_capability_path(path)
 
     def is_member(self, user_id: str) -> bool:
-        """Check if user is a member of this channel"""
+        """
+        Check if user or tool is a member of this channel.
+
+        Args:
+            user_id: User ID (U_*) or Tool ID (T_*)
+
+        Returns:
+            True if identifier is the channel owner, a member, or a registered tool
+        """
+        # Channel creator is always a member
+        if user_id == self.channel_id:
+            return True
+
+        # Check if it's a tool
+        if user_id.startswith('T'):
+            tool = self.state_store.get_state(self.channel_id, f"auth/tools/{user_id}")
+            return tool is not None
+
+        # Check if it's a regular member
         member = self.state_store.get_state(self.channel_id, f"members/{user_id}")
-        return member is not None or user_id == self.channel_id
+        return member is not None
 
     def is_channel_admin(self, user_id: str) -> bool:
         """

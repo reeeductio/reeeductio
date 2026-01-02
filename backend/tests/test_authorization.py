@@ -21,10 +21,10 @@ def test_granted_capability(state_store, authz, crypto, admin_keypair, user_keyp
     admin_private = admin_keypair['private']
     user_id = user_keypair['user_id']
 
-    # Create a capability for user
+    # Create a capability for user (read permission for everything)
     capability = {
         "op": "read",
-        "path": "{any}",
+        "path": "{...}",  # {...} matches everything at any depth
         "granted_by": admin_id,
         "granted_at": 12345000
     }
@@ -65,23 +65,33 @@ def test_ungranted_capability_rejection(authz, admin_keypair, user_keypair):
 
 
 def test_path_matching(authz):
-    """Test path matching logic with new wildcard syntax"""
-    # All matches are prefix matches
-    # {any} matches one segment as prefix
+    """Test path matching logic with {...} rest wildcard"""
+    # {any} matches exactly one segment (exact depth)
     assert authz._path_matches("{any}", "members")
-    assert authz._path_matches("{any}", "members/alice")  # Prefix match
+    assert not authz._path_matches("{any}", "members/alice")  # Too many segments
 
-    # {any} with additional segments
+    # {...} matches any depth (prefix match)
+    assert authz._path_matches("{...}", "members")
+    assert authz._path_matches("{...}", "members/alice")
+    assert authz._path_matches("{...}", "members/alice/rights/cap1")
+
+    # {any} with additional segments - exact depth
     assert authz._path_matches("members/{any}", "members/alice")
-    assert authz._path_matches("members/{any}", "members/alice/rights")  # Prefix match
+    assert not authz._path_matches("members/{any}", "members/alice/rights")  # Too deep
 
-    # {self} resolves to user ID
-    assert authz._path_matches("profiles/{self}/", "profiles/U_alice/", "U_alice")
-    assert authz._path_matches("profiles/{self}", "profiles/U_alice/settings", "U_alice")  # Prefix match
-    assert not authz._path_matches("profiles/{self}/", "profiles/U_bob/", "U_alice")
+    # {any} with {...} - prefix match from that point
+    assert authz._path_matches("members/{any}/{...}", "members/alice/rights")
+    assert authz._path_matches("members/{any}/{...}", "members/alice/rights/cap1")
 
-    # Prefix matching
-    assert authz._path_matches("members/", "members/alice")
+    # {self} resolves to user ID - exact depth
+    assert authz._path_matches("profiles/{self}", "profiles/U_alice", "U_alice")
+    assert not authz._path_matches("profiles/{self}", "profiles/U_alice/settings", "U_alice")  # Too deep
+    assert not authz._path_matches("profiles/{self}", "profiles/U_bob", "U_alice")
+
+    # {self} with {...} - prefix match
+    assert authz._path_matches("profiles/{self}/{...}", "profiles/U_alice/settings", "U_alice")
+    assert authz._path_matches("profiles/{self}/{...}", "profiles/U_alice/settings/theme", "U_alice")
+    assert not authz._path_matches("profiles/{self}/{...}", "profiles/U_bob/settings", "U_alice")
 
     # Different paths don't match
     assert not authz._path_matches("members/alice", "members/bob")

@@ -14,7 +14,7 @@ from typing import Set
 PATH_SEGMENT_PATTERN = re.compile(r'^[a-zA-Z0-9._-]+$')
 
 # Reserved wildcards that can only appear in capability patterns
-RESERVED_WILDCARDS: Set[str] = {'{self}', '{any}', '{other}'}
+RESERVED_WILDCARDS: Set[str] = {'{self}', '{any}', '{other}', '{...}'}
 
 
 class PathValidationError(ValueError):

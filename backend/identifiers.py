@@ -22,6 +22,7 @@ class IdType(Enum):
     MESSAGE = 0b001100  # 'M' in base64 (12)
     USER = 0b010100     # 'U' in base64 (20)
     BLOB = 0b000001     # 'B' in base64 (1)
+    TOOL = 0b010011     # 'T' in base64 (19)
 
 
 # Base64 character mappings for the type codes
@@ -30,6 +31,7 @@ TYPE_TO_CHAR = {
     IdType.MESSAGE: 'M',  # 0b001100 = 12 -> 'M'
     IdType.USER: 'U',     # 0b010100 = 20 -> 'U'
     IdType.BLOB: 'B',     # 0b000001 = 1  -> 'B'
+    IdType.TOOL: 'T',     # 0b010011 = 19 -> 'T'
 }
 
 CHAR_TO_TYPE = {v: k for k, v in TYPE_TO_CHAR.items()}
@@ -210,6 +212,20 @@ def encode_user_id(public_key_bytes: bytes) -> str:
     return tid.to_base64()
 
 
+def encode_tool_id(public_key_bytes: bytes) -> str:
+    """
+    Encode a tool public key (Ed25519) as a typed identifier
+
+    Args:
+        public_key_bytes: 32-byte Ed25519 public key
+
+    Returns:
+        44-character base64 string starting with type indicator
+    """
+    tid = TypedIdentifier.from_ed25519_public_key(public_key_bytes, IdType.TOOL)
+    return tid.to_base64()
+
+
 def encode_message_id(hash_bytes: bytes) -> str:
     """
     Encode a message hash (SHA256) as a typed identifier
@@ -251,22 +267,22 @@ def decode_identifier(encoded: str) -> TypedIdentifier:
     return TypedIdentifier.from_base64(encoded)
 
 
-def extract_public_key(channel_or_user_id: str) -> bytes:
+def extract_public_key(channel_user_or_tool_id: str) -> bytes:
     """
-    Extract the raw 32-byte public key from a channel or user identifier
+    Extract the raw 32-byte public key from a channel, user, or tool identifier
 
     Args:
-        channel_or_user_id: 44-character typed identifier
+        channel_user_or_tool_id: 44-character typed identifier
 
     Returns:
         32-byte public key
 
     Raises:
-        ValueError: If identifier is not a CHANNEL or USER type
+        ValueError: If identifier is not a CHANNEL, USER, or TOOL type
     """
-    tid = TypedIdentifier.from_base64(channel_or_user_id)
-    if tid.id_type not in (IdType.CHANNEL, IdType.USER):
-        raise ValueError(f"Identifier must be CHANNEL or USER type, got {tid.id_type.name}")
+    tid = TypedIdentifier.from_base64(channel_user_or_tool_id)
+    if tid.id_type not in (IdType.CHANNEL, IdType.USER, IdType.TOOL):
+        raise ValueError(f"Identifier must be CHANNEL, USER, or TOOL type, got {tid.id_type.name}")
     return tid.data
 
 

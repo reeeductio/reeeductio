@@ -11,7 +11,7 @@ Implements:
 from typing import Optional, List, Dict, Any
 from state_store import StateStore
 from crypto import CryptoUtils
-from identifiers import extract_public_key
+from identifiers import extract_public_key, decode_identifier, IdType
 from path_validation import validate_capability_path, PathValidationError
 import fnmatch
 import base64
@@ -25,7 +25,15 @@ class AuthorizationEngine:
     def __init__(self, state_store: StateStore, crypto: CryptoUtils):
         self.state_store = state_store
         self.crypto = crypto
-    
+
+    def _is_tool(self, identifier: str) -> bool:
+        """Check if an identifier is a tool (has 'T' type prefix)"""
+        try:
+            tid = decode_identifier(identifier)
+            return tid.id_type == IdType.TOOL
+        except Exception:
+            return False
+
     def check_permission(
         self,
         channel_id: str,
@@ -34,18 +42,30 @@ class AuthorizationEngine:
         state_path: str
     ) -> bool:
         """
-        Check if user has permission for an operation on a state path
-        
+        Check if user or tool has permission for an operation on a state path
+
         Args:
             channel_id: Channel identifier
-            user_public_key: User's public key
+            user_public_key: User or tool typed identifier
             operation: 'read', 'create', or 'write'
             state_path: State path being accessed
-        
+
         Returns:
-            True if user has permission
+            True if user/tool has permission
         """
-        # Channel creator (channel_id as public key) has god mode
+        # Tools have NO ambient authority - they can only use explicit capabilities
+        if self._is_tool(user_public_key):
+            # Load tool capabilities only
+            capabilities = self._load_tool_capabilities(channel_id, user_public_key)
+
+            # Check if any capability grants permission
+            for cap in capabilities:
+                if self._capability_grants_permission(cap, operation, state_path, user_public_key):
+                    return True
+
+            return False
+
+        # For users: Channel creator has god mode
         # Compare underlying public keys (channel and user IDs have different type prefixes)
         try:
             channel_pubkey = extract_public_key(channel_id)
@@ -55,7 +75,7 @@ class AuthorizationEngine:
         except ValueError:
             # If extraction fails, fall through to capability check
             pass
-        
+
         # Load direct capabilities for this user
         capabilities = self._load_user_capabilities(channel_id, user_public_key)
 
@@ -178,6 +198,42 @@ class AuthorizationEngine:
 
         return all_role_capabilities
 
+    def _load_tool_capabilities(
+        self,
+        channel_id: str,
+        tool_public_key: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Load all capabilities for a tool from state.
+
+        Tools have NO ambient authority - they can ONLY use capabilities
+        explicitly granted in auth/tools/{tool_id}/rights/
+
+        Args:
+            channel_id: Channel identifier
+            tool_public_key: Tool's typed identifier
+
+        Returns:
+            List of capability dictionaries
+        """
+        prefix = f"auth/tools/{tool_public_key}/rights/"
+        capability_states = self.state_store.list_state(channel_id, prefix)
+
+        capabilities = []
+        for state in capability_states:
+            try:
+                decoded = base64.b64decode(state["data"])
+                cap = json.loads(decoded)
+
+                # Verify capability signature
+                if self._verify_capability(channel_id, tool_public_key, cap):
+                    capabilities.append(cap)
+            except Exception as e:
+                print(f"Failed to decode tool capability: {e}")
+                continue
+
+        return capabilities
+
     def _verify_capability(
         self,
         channel_id: str,
@@ -263,13 +319,16 @@ class AuthorizationEngine:
         - {any} matches one path segment
         - {self} resolves to user_public_key
         - {other} matches any segment except user_public_key
-        - Trailing '/' indicates prefix match
+        - {...} matches any remaining path segments (rest wildcard, any depth)
+        - Trailing '/' indicates prefix match (deprecated - use {...} instead)
 
         Examples:
           pattern="members/{any}", path="members/alice", user="U_alice" → True
-          pattern="profiles/{self}/", path="profiles/U_alice/", user="U_alice" → True
-          pattern="profiles/{self}/", path="profiles/U_bob/", user="U_alice" → False
-          pattern="members/", path="members/alice/rights/cap1" → True
+          pattern="profiles/{self}/", path="profiles/U_alice/settings", user="U_alice" → True
+          pattern="auth/users/{any}", path="auth/users/U_alice" → True
+          pattern="auth/users/{any}", path="auth/users/U_alice/roles/admin" → False
+          pattern="auth/users/{...}", path="auth/users/U_alice/roles/admin" → True
+          pattern="auth/users/{any}/{...}", path="auth/users/U_alice/roles/admin" → True
 
         Args:
             pattern: Pattern with optional wildcards
@@ -291,9 +350,19 @@ class AuthorizationEngine:
         pattern_parts = pattern.split('/')
         path_parts = path.split('/')
 
-        # Pattern cannot have more segments than path
-        if len(pattern_parts) > len(path_parts):
-            return False
+        # Check for {...} rest wildcard - if present, it must be the last segment
+        has_rest_wildcard = len(pattern_parts) > 0 and pattern_parts[-1] == '{...}'
+
+        if has_rest_wildcard:
+            # Remove {...} from pattern for segment matching
+            pattern_parts = pattern_parts[:-1]
+            # Pattern (without {...}) cannot have more segments than path
+            if len(pattern_parts) > len(path_parts):
+                return False
+        else:
+            # Without {...}, pattern cannot have more segments than path
+            if len(pattern_parts) > len(path_parts):
+                return False
 
         # Check each segment in the pattern
         for i, pattern_part in enumerate(pattern_parts):
@@ -318,7 +387,12 @@ class AuthorizationEngine:
                 return False
 
         # All pattern segments matched
-        return True
+        # If we have {...}, we match regardless of remaining path segments
+        if has_rest_wildcard:
+            return True
+
+        # Without {...}, we need exact depth match
+        return len(pattern_parts) == len(path_parts)
     
     def is_capability_path(self, path: str) -> bool:
         """
@@ -327,12 +401,13 @@ class AuthorizationEngine:
         Capability paths:
         - auth/users/{public_key}/rights/{capability_id}
         - auth/roles/{role_id}/rights/{capability_id}
+        - auth/tools/{tool_id}/rights/{capability_id}
         """
         parts = path.strip('/').split('/')
         return (
             len(parts) >= 5 and
             parts[0] == 'auth' and
-            parts[1] in ('users', 'roles') and
+            parts[1] in ('users', 'roles', 'tools') and
             parts[3] == 'rights'
         )
 
@@ -348,6 +423,19 @@ class AuthorizationEngine:
             parts[0] == 'auth' and
             parts[1] == 'users' and
             parts[3] == 'roles'
+        )
+
+    def is_tool_definition_path(self, path: str) -> bool:
+        """
+        Check if a state path is for a tool definition
+
+        Tool definition paths: auth/tools/{tool_id}
+        """
+        parts = path.strip('/').split('/')
+        return (
+            len(parts) == 3 and
+            parts[0] == 'auth' and
+            parts[1] == 'tools'
         )
     
     def verify_capability_grant(
@@ -592,10 +680,9 @@ class AuthorizationEngine:
         NOT runtime path matching. We're checking if the granter's capability
         pattern subsumes the requested capability pattern.
 
-        All capability matches are prefix matches in our scheme.
-
         Wildcard subsumption rules:
-        - {any} subsumes everything ({any}, {self}, {other}, literals)
+        - {...} subsumes everything (rest wildcard - matches any depth)
+        - {any} subsumes {any}, {self}, {other}, and literals (one segment)
         - {self} only subsumes {self}
         - {other} only subsumes {other}
         - Literals only subsume identical literals
@@ -603,9 +690,9 @@ class AuthorizationEngine:
         Examples:
           grant="profiles/{any}" covers req="profiles/{self}/" → True
           grant="profiles/{self}" covers req="profiles/{any}/" → False
-          grant="members" covers req="members/" → True
-          grant="members" covers req="topics/" → False
-          grant="members" covers req="members/alice/" → True (prefix)
+          grant="auth/users/{...}" covers req="auth/users/{any}/roles/admin" → True
+          grant="auth/users/{any}" covers req="auth/users/{any}/roles/admin" → False
+          grant="auth/users/{any}/{...}" covers req="auth/users/{any}/roles/{any}" → True
         """
         # Exact match
         if grant_path == req_path:
@@ -619,24 +706,149 @@ class AuthorizationEngine:
         grant_parts = grant_norm.split('/')
         req_parts = req_norm.split('/')
 
-        # For prefix matching: grant must not have more segments than req
-        if len(grant_parts) > len(req_parts):
-            return False
+        # Check if grant has {...} rest wildcard
+        has_grant_rest = len(grant_parts) > 0 and grant_parts[-1] == '{...}'
 
-        # Check each segment with wildcard subsumption
-        for i, grant_seg in enumerate(grant_parts):
-            req_seg = req_parts[i]
-            if not self._wildcard_subsumes(grant_seg, req_seg):
+        if has_grant_rest:
+            # Grant has {...} - it covers anything with matching prefix
+            grant_parts = grant_parts[:-1]  # Remove {...} for comparison
+            # Grant prefix must not be longer than req
+            if len(grant_parts) > len(req_parts):
+                return False
+            # Check prefix matches with wildcard subsumption
+            for i, grant_seg in enumerate(grant_parts):
+                req_seg = req_parts[i]
+                if not self._wildcard_subsumes(grant_seg, req_seg):
+                    return False
+            # Prefix matched, {...} covers rest
+            return True
+        else:
+            # Grant doesn't have {...} - must match exact depth (not prefix)
+            # Both patterns must have same number of segments
+            if len(grant_parts) != len(req_parts):
                 return False
 
-        return True
+            # Check each segment with wildcard subsumption
+            for i, grant_seg in enumerate(grant_parts):
+                req_seg = req_parts[i]
+                if not self._wildcard_subsumes(grant_seg, req_seg):
+                    return False
+
+            return True
 
     def _wildcard_subsumes(self, granter_seg: str, requested_seg: str) -> bool:
         """
         Check if granter's path segment subsumes requested segment.
 
-        {any} subsumes everything, otherwise must match exactly.
+        Subsumption rules:
+        - {...} subsumes everything (rest wildcard)
+        - {any} subsumes {any}, {self}, {other}, and literals
+        - {self} only subsumes {self}
+        - {other} only subsumes {other}
+        - Literals only subsume identical literals
         """
-        if granter_seg == '{any}':
+        if granter_seg == '{...}':
+            # Rest wildcard subsumes everything
             return True
+        if granter_seg == '{any}':
+            # {any} subsumes everything except {...}
+            return requested_seg != '{...}'
         return granter_seg == requested_seg
+
+    def verify_tool_creation(
+        self,
+        channel_id: str,
+        path: str,
+        tool_data: dict,
+        creator_public_key: str,
+        signature_b64: str
+    ) -> bool:
+        """
+        Verify that a tool creation is valid.
+
+        According to AUTHORIZATION.md, a tool can only be created if:
+        1. Creator has 'create' or 'write' permission on auth/tools/{tool_id}
+        2. Creator has superset permission for each capability being granted to the tool
+        3. Tool definition is properly signed by creator
+        4. Path-content consistency: tool_id in data matches path
+
+        Args:
+            channel_id: Typed channel identifier
+            path: State path where tool is being defined (auth/tools/{tool_id})
+            tool_data: The tool metadata being created
+            creator_public_key: Typed user identifier of creator
+            signature_b64: Base64-encoded signature
+
+        Returns:
+            True if tool creation is valid
+        """
+        # Verify path-content consistency
+        # Path format: auth/tools/{tool_id}
+        parts = path.strip('/').split('/')
+        if len(parts) != 3 or parts[0] != 'auth' or parts[1] != 'tools':
+            return False
+
+        tool_id_from_path = parts[2]
+        tool_id_from_data = tool_data.get('tool_id')
+
+        if tool_id_from_path != tool_id_from_data:
+            print(f"Tool creation rejected: tool_id mismatch (path='{tool_id_from_path}', data='{tool_id_from_data}')")
+            return False
+
+        # Verify signature
+        # TODO: Implement proper signature verification for tool creation
+        # For now, trust state write validation
+
+        # Channel creator can create any tool
+        try:
+            creator_bytes = extract_public_key(creator_public_key)
+            channel_bytes = extract_public_key(channel_id)
+            if creator_bytes == channel_bytes:
+                return True
+        except Exception:
+            pass
+
+        # Load creator's capabilities
+        creator_direct_caps = self._load_user_capabilities(channel_id, creator_public_key)
+        creator_role_caps = self._load_role_capabilities(channel_id, creator_public_key)
+        creator_all_caps = creator_direct_caps + creator_role_caps
+
+        # Check if creator has permission to create this specific tool
+        can_create_tools = False
+        for cap in creator_all_caps:
+            if self._capability_grants_permission(
+                cap,
+                "create",
+                path,  # Check permission for the actual path being created
+                creator_public_key
+            ):
+                can_create_tools = True
+                break
+
+        if not can_create_tools:
+            return False
+
+        # Load tool's capabilities to verify creator has superset
+        tool_cap_prefix = f"auth/tools/{tool_id_from_path}/rights/"
+        tool_cap_states = self.state_store.list_state(channel_id, tool_cap_prefix)
+
+        tool_capabilities = []
+        for cap_state in tool_cap_states:
+            try:
+                cap_decoded = base64.b64decode(cap_state["data"])
+                cap = json.loads(cap_decoded)
+                tool_capabilities.append(cap)
+            except Exception as e:
+                print(f"Failed to decode tool capability: {e}")
+                continue
+
+        # If tool has no capabilities, creation is allowed (already checked can_create_tools)
+        if not tool_capabilities:
+            return True
+
+        # Check if creator has superset of all tool capabilities
+        # This prevents privilege escalation through tool creation
+        return self._has_capability_superset(
+            creator_all_caps,
+            tool_capabilities
+        )
