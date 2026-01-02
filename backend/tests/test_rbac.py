@@ -3,27 +3,26 @@ Tests for Role-Based Access Control (RBAC)
 """
 
 import pytest
-import base64
-import json
 from authorization import AuthorizationEngine
 from sqlite_state_store import SqliteStateStore
 from crypto import CryptoUtils
 from identifiers import extract_public_key, encode_user_id
 
+import sys
+from pathlib import Path
+
+# Add tests directory to path to import conftest
+sys.path.insert(0, str(Path(__file__).parent))
+
+import conftest
+sign_state_entry = conftest.sign_state_entry
+sign_and_store_state = conftest.sign_and_store_state
+
 
 @pytest.fixture
-def authz(temp_db_path):
-    """Create AuthorizationEngine with temp storage"""
-    state_store = SqliteStateStore(temp_db_path)
-    crypto = CryptoUtils()
-    return AuthorizationEngine(state_store, crypto)
-
-
-@pytest.fixture
-def channel_with_roles(temp_db_path, admin_keypair):
+def channel_with_roles(temp_db_path, state_store, crypto, admin_keypair):
     """Set up a channel with role definitions"""
-    state_store = SqliteStateStore(temp_db_path)
-    crypto = CryptoUtils()
+
     channel_id = admin_keypair['channel_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
@@ -31,95 +30,74 @@ def channel_with_roles(temp_db_path, admin_keypair):
     # Create "user" role
     user_role = {
         "role_id": "user",
-        "description": "Standard user role",
-        "created_by": admin_id,
-        "created_at": 1234567890,
-        "signature": "fake_signature"
+        "description": "Standard user role"
     }
-    state_store.set_state(
-        channel_id,
-        "auth/roles/user",
-        base64.b64encode(json.dumps(user_role).encode()).decode(),
-        admin_id,
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path="auth/roles/user",
+        contents=user_role,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     # Add capabilities to "user" role
     user_read_cap = {
         "op": "read",
-        "path": "{...}",  # Can read anything at any depth
-        "granted_by": admin_id,
-        "granted_at": 1234567890
+        "path": "{...}"  # Can read anything at any depth
     }
-    # Sign capability (recipient is the role_id)
-    cap_msg = crypto.compute_capability_signature_message(
-        channel_id, "user", user_read_cap["op"], user_read_cap["path"], user_read_cap["granted_at"]
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path="auth/roles/user/rights/cap_read",
+        contents=user_read_cap,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
-    user_read_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-
-    state_store.set_state(
-        channel_id,
-        "auth/roles/user/rights/cap_read",
-        base64.b64encode(json.dumps(user_read_cap).encode()).decode(),
-        admin_id,
-        1234567890
-    )
-
     user_post_cap = {
         "op": "create",
-        "path": "topics/{any}/messages/{...}",  # Can create messages at any depth under topics
-        "granted_by": admin_id,
-        "granted_at": 1234567890
+        "path": "topics/{any}/messages/{...}"  # Can create messages at any depth under topics
     }
-    # Sign capability (recipient is the role_id)
-    cap_msg = crypto.compute_capability_signature_message(
-        channel_id, "user", user_post_cap["op"], user_post_cap["path"], user_post_cap["granted_at"]
-    )
-    user_post_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-
-    state_store.set_state(
-        channel_id,
-        "auth/roles/user/rights/cap_post",
-        base64.b64encode(json.dumps(user_post_cap).encode()).decode(),
-        admin_id,
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path="auth/roles/user/rights/cap_post",
+        contents=user_post_cap,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     # Create "moderator" role
     mod_role = {
         "role_id": "moderator",
-        "description": "Moderator role",
-        "created_by": admin_id,
-        "created_at": 1234567890,
-        "signature": "fake_signature"
+        "description": "Moderator role"
     }
-    state_store.set_state(
-        channel_id,
-        "auth/roles/moderator",
-        base64.b64encode(json.dumps(mod_role).encode()).decode(),
-        admin_id,
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path="auth/roles/moderator",
+        contents=mod_role,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     # Moderators can ban users
     mod_ban_cap = {
         "op": "write",
-        "path": "auth/users/{other}/banned",
-        "granted_by": admin_id,
-        "granted_at": 1234567890
+        "path": "auth/users/{other}/banned"
     }
-    # Sign capability (recipient is the role_id)
-    cap_msg = crypto.compute_capability_signature_message(
-        channel_id, "moderator", mod_ban_cap["op"], mod_ban_cap["path"], mod_ban_cap["granted_at"]
-    )
-    mod_ban_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-
-    state_store.set_state(
-        channel_id,
-        "auth/roles/moderator/rights/cap_ban",
-        base64.b64encode(json.dumps(mod_ban_cap).encode()).decode(),
-        admin_id,
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path="auth/roles/moderator/rights/cap_ban",
+        contents=mod_ban_cap,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     return {
@@ -129,26 +107,28 @@ def channel_with_roles(temp_db_path, admin_keypair):
     }
 
 
-def test_load_role_capabilities(authz, channel_with_roles, user_keypair):
+def test_load_role_capabilities(authz, channel_with_roles, user_keypair, admin_keypair):
     """Test loading capabilities from user's roles"""
     channel_id = channel_with_roles['channel_id']
     user_id = user_keypair['user_id']
     state_store = channel_with_roles['state_store']
 
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+
     # Grant "user" role to the user
     role_grant = {
         "user_id": user_id,
-        "role_id": "user",
-        "granted_by": channel_with_roles['admin_id'],
-        "granted_at": 1234567890,
-        "signature": "fake_signature"
+        "role_id": "user"
     }
-    state_store.set_state(
-        channel_id,
-        f"auth/users/{user_id}/roles/user",
-        base64.b64encode(json.dumps(role_grant).encode()).decode(),
-        channel_with_roles['admin_id'],
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/roles/user",
+        contents=role_grant,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     # Load role capabilities
@@ -163,24 +143,27 @@ def test_load_role_capabilities(authz, channel_with_roles, user_keypair):
     assert 'create' in ops
 
 
-def test_permission_check_with_roles(authz, channel_with_roles, user_keypair):
+def test_permission_check_with_roles(authz, channel_with_roles, user_keypair, admin_keypair):
     """Test that permission checks include role capabilities"""
     channel_id = channel_with_roles['channel_id']
     user_id = user_keypair['user_id']
     state_store = channel_with_roles['state_store']
 
-    # Add user as member
-    member_data = {
-        "public_key": user_id,
-        "added_at": 1234567890,
-        "added_by": channel_with_roles['admin_id']
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+
+    # Add user as member of the channel
+    user_info = {
+        "user_id": user_id
     }
-    state_store.set_state(
-        channel_id,
-        f"members/{user_id}",
-        base64.b64encode(json.dumps(member_data).encode()).decode(),
-        channel_with_roles['admin_id'],
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     # User has no direct capabilities yet
@@ -189,17 +172,16 @@ def test_permission_check_with_roles(authz, channel_with_roles, user_keypair):
     # Grant "user" role
     role_grant = {
         "user_id": user_id,
-        "role_id": "user",
-        "granted_by": channel_with_roles['admin_id'],
-        "granted_at": 1234567890,
-        "signature": "fake_signature"
+        "role_id": "user"
     }
-    state_store.set_state(
-        channel_id,
-        f"auth/users/{user_id}/roles/user",
-        base64.b64encode(json.dumps(role_grant).encode()).decode(),
-        channel_with_roles['admin_id'],
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/roles/user",
+        contents=role_grant,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     # Now user should have permissions from role
@@ -208,41 +190,42 @@ def test_permission_check_with_roles(authz, channel_with_roles, user_keypair):
     assert not authz.check_permission(channel_id, user_id, "write", "topics/general/messages/msg1")
 
 
-def test_multiple_roles(authz, channel_with_roles, user_keypair):
+def test_multiple_roles(authz, channel_with_roles, user_keypair, admin_keypair):
     """Test user with multiple roles gets all capabilities"""
     channel_id = channel_with_roles['channel_id']
     user_id = user_keypair['user_id']
     state_store = channel_with_roles['state_store']
 
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+
     # Grant both "user" and "moderator" roles
     user_role_grant = {
         "user_id": user_id,
-        "role_id": "user",
-        "granted_by": channel_with_roles['admin_id'],
-        "granted_at": 1234567890,
-        "signature": "fake_signature"
+        "role_id": "user"
     }
-    state_store.set_state(
-        channel_id,
-        f"auth/users/{user_id}/roles/user",
-        base64.b64encode(json.dumps(user_role_grant).encode()).decode(),
-        channel_with_roles['admin_id'],
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/roles/user",
+        contents=user_role_grant,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     mod_role_grant = {
         "user_id": user_id,
-        "role_id": "moderator",
-        "granted_by": channel_with_roles['admin_id'],
-        "granted_at": 1234567890,
-        "signature": "fake_signature"
+        "role_id": "moderator"
     }
-    state_store.set_state(
-        channel_id,
-        f"auth/users/{user_id}/roles/moderator",
-        base64.b64encode(json.dumps(mod_role_grant).encode()).decode(),
-        channel_with_roles['admin_id'],
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/roles/moderator",
+        contents=mod_role_grant,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     # User should have capabilities from both roles
@@ -254,11 +237,14 @@ def test_multiple_roles(authz, channel_with_roles, user_keypair):
     assert authz.check_permission(channel_id, user_id, "write", "auth/users/U_other/banned")  # from moderator role
 
 
-def test_expired_role_grant_ignored(authz, channel_with_roles, user_keypair):
+def test_expired_role_grant_ignored(authz, channel_with_roles, user_keypair, admin_keypair):
     """Test that expired role grants are not loaded"""
     channel_id = channel_with_roles['channel_id']
     user_id = user_keypair['user_id']
     state_store = channel_with_roles['state_store']
+
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
 
     import time
     past_time = int((time.time() - 3600) * 1000)  # 1 hour ago
@@ -267,17 +253,16 @@ def test_expired_role_grant_ignored(authz, channel_with_roles, user_keypair):
     role_grant = {
         "user_id": user_id,
         "role_id": "user",
-        "granted_by": channel_with_roles['admin_id'],
-        "granted_at": 1234567890,
-        "expires_at": past_time,
-        "signature": "fake_signature"
+        "expires_at": past_time
     }
-    state_store.set_state(
-        channel_id,
-        f"auth/users/{user_id}/roles/user",
-        base64.b64encode(json.dumps(role_grant).encode()).decode(),
-        channel_with_roles['admin_id'],
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/roles/user",
+        contents=role_grant,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     # Should not load capabilities from expired role
@@ -297,9 +282,7 @@ def test_verify_role_grant_subset_checking(authz, channel_with_roles, user_keypa
     # Admin (channel creator) can grant any role
     role_grant_data = {
         "user_id": user_id,
-        "role_id": "user",
-        "granted_by": admin_id,
-        "granted_at": 1234567890
+        "role_id": "user"
     }
     path = f"auth/users/{user_id}/roles/user"
 
@@ -307,31 +290,32 @@ def test_verify_role_grant_subset_checking(authz, channel_with_roles, user_keypa
         channel_id,
         path,
         role_grant_data,
-        admin_id,
-        "fake_signature"
+        admin_id
     )
 
 
-def test_verify_role_grant_privilege_escalation_prevented(authz, channel_with_roles, user_keypair):
+def test_verify_role_grant_privilege_escalation_prevented(authz, channel_with_roles, user_keypair, admin_keypair):
     """Test that users cannot grant roles they don't have capabilities for"""
     channel_id = channel_with_roles['channel_id']
     user_id = user_keypair['user_id']
     state_store = channel_with_roles['state_store']
 
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+
     # Give user1 only read permission
     user1_cap = {
         "op": "read",
-        "path": "{any}",
-        "granted_by": channel_with_roles['admin_id'],
-        "granted_at": 1234567890,
-        "signature": "fake_signature"
+        "path": "{any}"
     }
-    state_store.set_state(
-        channel_id,
-        f"auth/users/{user_id}/rights/cap_001",
-        base64.b64encode(json.dumps(user1_cap).encode()).decode(),
-        channel_with_roles['admin_id'],
-        1234567890
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/rights/cap_001",
+        contents=user1_cap,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
     )
 
     # Create another user
@@ -350,9 +334,7 @@ def test_verify_role_grant_privilege_escalation_prevented(authz, channel_with_ro
     # (moderator has write permission, but user1 only has read)
     role_grant_data = {
         "user_id": user2_id,
-        "role_id": "moderator",
-        "granted_by": user_id,
-        "granted_at": 1234567890
+        "role_id": "moderator"
     }
     path = f"auth/users/{user2_id}/roles/moderator"
 
@@ -361,8 +343,7 @@ def test_verify_role_grant_privilege_escalation_prevented(authz, channel_with_ro
         channel_id,
         path,
         role_grant_data,
-        user_id,
-        "fake_signature"
+        user_id
     )
 
 
