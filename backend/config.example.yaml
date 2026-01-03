@@ -45,6 +45,28 @@ blob_store:
 #   type: sqlite
 #   db_path: /data/blobs.db
 
+# Logging configuration
+logging:
+  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: INFO
+
+  # Log format: text or json
+  # Use json for production (structured logging)
+  # Use text for development (human-readable)
+  format: text
+
+  # Optional: Log file path (enables file logging with rotation)
+  # file: /var/log/reeeductio/app.log
+
+  # Maximum log file size before rotation (in bytes)
+  max_bytes: 10485760  # 10 MB
+
+  # Number of backup log files to keep
+  backup_count: 5
+
+  # Enable uvicorn access logs
+  enable_access_log: true
+
 # Application settings
 environment: production  # development, production, or test
 debug: false

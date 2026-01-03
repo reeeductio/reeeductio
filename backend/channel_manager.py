@@ -15,6 +15,9 @@ from sqlite_state_store import SqliteStateStore
 from sqlite_message_store import SqliteMessageStore
 from blob_store import BlobStore
 from lru_cache import LRUCache
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class ChannelManager:
@@ -90,8 +93,10 @@ class ChannelManager:
             # Check if channel exists in cache
             cached_channel = self._channels.get(channel_id)
             if cached_channel is not None:
+                logger.debug(f"Channel cache hit: {channel_id}")
                 return cached_channel
 
+            logger.info(f"Creating new channel instance: {channel_id}")
             # Create stores for this channel
             if self.state_store_factory and self.message_store_factory:
                 # Use provided factories (e.g., Firestore - shared global stores)

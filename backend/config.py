@@ -100,6 +100,34 @@ DatabaseConfig = Annotated[
 ]
 
 
+class LoggingConfig(BaseModel):
+    """Logging configuration"""
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        default="INFO",
+        description="Logging level"
+    )
+    format: Literal["text", "json"] = Field(
+        default="text",
+        description="Log format (text or json)"
+    )
+    file: Optional[str] = Field(
+        default=None,
+        description="Log file path (optional, enables file logging)"
+    )
+    max_bytes: int = Field(
+        default=10485760,  # 10 MB
+        description="Maximum log file size in bytes before rotation"
+    )
+    backup_count: int = Field(
+        default=5,
+        description="Number of backup log files to keep"
+    )
+    enable_access_log: bool = Field(
+        default=True,
+        description="Enable uvicorn access logs"
+    )
+
+
 class ServerConfig(BaseSettings):
     """Configuration for server settings"""
 
@@ -161,6 +189,9 @@ class AppConfig(BaseSettings):
     # Blob storage configuration
     blob_store: BlobStoreConfig = Field(default_factory=lambda: FilesystemBlobConfig())
 
+    # Logging configuration
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
+
     # Environment (for logging/debugging)
     environment: Literal["development", "production", "test"] = Field(
         default="development",
@@ -213,6 +244,9 @@ class AppConfig(BaseSettings):
         # Create nested config objects
         if "server" in data and isinstance(data["server"], dict):
             data["server"] = ServerConfig(**data["server"])
+
+        if "logging" in data and isinstance(data["logging"], dict):
+            data["logging"] = LoggingConfig(**data["logging"])
 
         if "database" in data and isinstance(data["database"], dict):
             db_data = data["database"]

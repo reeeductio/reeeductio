@@ -26,9 +26,22 @@ from filesystem_blob_store import FilesystemBlobStore
 from firestore_state_store import FirestoreStateStore
 from firestore_message_store import FirestoreMessageStore
 from channel_manager import ChannelManager
+from logging_config import setup_logging, get_logger
 
 # Load configuration
 config = get_config()
+
+# Setup logging
+setup_logging(
+    level=config.logging.level,
+    log_format=config.logging.format,
+    log_file=config.logging.file,
+    max_bytes=config.logging.max_bytes,
+    backup_count=config.logging.backup_count,
+    enable_access_log=config.logging.enable_access_log
+)
+
+logger = get_logger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -43,10 +56,12 @@ JWT_ALGORITHM = config.server.jwt_algorithm
 JWT_EXPIRY_HOURS = config.server.jwt_expiry_hours
 
 # Initialize blob store based on configuration
+logger.info(f"Initializing blob store: type={config.blob_store.type}")
 if config.blob_store.type == "filesystem":
     blob_store = FilesystemBlobStore(config.blob_store.path)
 elif config.blob_store.type == "s3":
     blob_store = S3BlobStore(config.blob_store)
+    logger.info(f"S3 blob store configured: bucket={config.blob_store.bucket_name}")
 elif config.blob_store.type == "sqlite":
     blob_store = SqliteBlobStore(config.blob_store.db_path)
 else:
@@ -60,12 +75,16 @@ if isinstance(config.database, FirestoreDatabaseConfig):
     # Firestore: create factories that return shared store instances
     project_id = config.database.project_id
     database_id = config.database.database_id
+    logger.info(f"Using Firestore database: project={project_id}, database={database_id}")
 
     state_store_factory = lambda: FirestoreStateStore(project_id, database_id)
     message_store_factory = lambda: FirestoreMessageStore(project_id, database_id)
+else:
+    logger.info("Using SQLite database (per-channel stores)")
 # else: SQLite (default) - ChannelManager creates per-channel stores
 
 # Initialize components
+logger.info("Initializing channel manager")
 channel_manager = ChannelManager(
     base_storage_dir="channels",
     max_cached_channels=1000,
@@ -176,6 +195,7 @@ async def auth_challenge(
     request: ChallengeRequest
 ):
     """Request an authentication challenge (random nonce to sign)"""
+    logger.debug(f"Challenge requested: channel={channel_id}, user={request.public_key[:16]}...")
     channel = channel_manager.get_channel(channel_id)
     result = channel.create_challenge(request.public_key, CHALLENGE_EXPIRY_SECONDS)
 
@@ -199,9 +219,11 @@ async def auth_verify(
             request.challenge,
             request.signature
         )
+        logger.info(f"User authenticated: channel={channel_id}, user={request.public_key[:16]}...")
     except ValueError as e:
         # Map ValueError to appropriate HTTP status
         error_msg = str(e)
+        logger.warning(f"Authentication failed: channel={channel_id}, user={request.public_key[:16]}..., error={error_msg}")
         if "not found" in error_msg or "expired" in error_msg or "mismatch" in error_msg:
             raise HTTPException(status_code=401, detail=error_msg)
         elif "Invalid" in error_msg:
@@ -366,6 +388,7 @@ async def post_message(
             signature=message.signature,
             token=credentials.credentials
         )
+        logger.debug(f"Message posted: channel={channel_id}, topic={topic_id}, hash={message.message_hash[:16]}...")
 
         return {
             "message_hash": message.message_hash,
@@ -373,6 +396,7 @@ async def post_message(
         }
     except ValueError as e:
         error_msg = str(e)
+        logger.warning(f"Message post failed: channel={channel_id}, topic={topic_id}, error={error_msg}")
         if "permission" in error_msg.lower():
             raise HTTPException(status_code=403, detail=error_msg)
         elif "conflict" in error_msg.lower():
@@ -590,6 +614,20 @@ async def websocket_stream(
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": int(time.time() * 1000)}
+
+
+# Application startup/shutdown events
+@app.on_event("startup")
+async def startup_event():
+    """Log application startup"""
+    logger.info(f"Application starting: environment={config.environment}, debug={config.debug}")
+    logger.info(f"Server listening on {config.server.host}:{config.server.port}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Log application shutdown"""
+    logger.info("Application shutting down")
 
 
 if __name__ == "__main__":
