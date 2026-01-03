@@ -7,5 +7,7 @@
 5. Figure out a plan for /login
    - Maybe this uses a special queue too, with public key given in the config
 6. ~~Add spec for websocket on /channel/{channel_id}/stream~~ ✓
-7. Separate keys into "tools" and "users", where users inherit the "user" role by default but tools have only their specific rights
+7. ~~Separate keys into "tools" and "users", where users inherit the "user" role by default but tools have only their specific rights~~ ✓
 8. ~~Add "self" wildcard for paths~~ ✓
+9. Python client library
+10. Javascript client library - Can we build automatically from the OpenAPI spec?

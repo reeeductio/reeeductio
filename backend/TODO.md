@@ -14,3 +14,6 @@
 13. ~~Think about moving each channel to use its own embedded databases~~  ✓
 14. ~~Require SHA256 checksum on signed url uploads~~ ✓
 15. ~~Add size limits for messages and blobs~~ ✓
+16. Fix vulnerability in authz where we're not verifying the full signature chain back to the creator public key (URGENT)
+17. Verify state signatures in the state store get_state() before adding to the cache, then we don't have to validate again and again in the Channel
+18. Add an authz cache of public keys that we've already validated back to the creator key
