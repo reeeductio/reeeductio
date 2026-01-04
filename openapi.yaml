@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: E2EE PubSub Messaging API
+  title: "reeeductio Spaces API"
   description: |
     End-to-end encrypted messaging system with capability-based authorization.
     
