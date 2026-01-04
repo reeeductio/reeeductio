@@ -359,3 +359,310 @@ def test_write_dominates_all_operations(authz):
     # Write can grant read
     requested_caps = [{"op": "read", "path": "test/{...}"}]
     assert authz._has_capability_superset(granter_caps, requested_caps)
+
+
+def test_owned_modify_capability(state_store, authz, admin_keypair, user_keypair):
+    """Test that must_be_owner=true restricts modify to owned objects"""
+    channel_id = admin_keypair['channel_id']
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+    user_id = user_keypair['user_id']
+    user_private = user_keypair['private']
+
+    # Add the user to the channel
+    user_info = {"user_id": user_id}
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Grant user ownership-restricted modify permission
+    capability = {
+        "op": "modify",
+        "path": "docs/{...}",
+        "must_be_owner": True
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/rights/modify_owned",
+        contents=capability,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Create a document owned by the user
+    user_doc = {"title": "User's document"}
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path="docs/user_doc",
+        contents=user_doc,
+        signer_private_key=user_private,
+        signer_user_id=user_id,
+        signed_at=12346000
+    )
+
+    # Create a document owned by admin
+    admin_doc = {"title": "Admin's document"}
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path="docs/admin_doc",
+        contents=admin_doc,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12346000
+    )
+
+    # User should be able to modify their own document
+    assert authz.check_permission(channel_id, user_id, "modify", "docs/user_doc")
+
+    # User should NOT be able to modify admin's document
+    assert not authz.check_permission(channel_id, user_id, "modify", "docs/admin_doc")
+
+
+def test_owned_delete_capability(state_store, authz, admin_keypair, user_keypair):
+    """Test that must_be_owner=true restricts delete to owned objects"""
+    channel_id = admin_keypair['channel_id']
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+    user_id = user_keypair['user_id']
+    user_private = user_keypair['private']
+
+    # Add the user to the channel
+    user_info = {"user_id": user_id}
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Grant user ownership-restricted delete permission
+    capability = {
+        "op": "delete",
+        "path": "files/{...}",
+        "must_be_owner": True
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/rights/delete_owned",
+        contents=capability,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Create a file owned by the user
+    user_file = {"name": "user_file.txt"}
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path="files/user_file",
+        contents=user_file,
+        signer_private_key=user_private,
+        signer_user_id=user_id,
+        signed_at=12346000
+    )
+
+    # Create a file owned by admin
+    admin_file = {"name": "admin_file.txt"}
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path="files/admin_file",
+        contents=admin_file,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12346000
+    )
+
+    # User should be able to delete their own file
+    assert authz.check_permission(channel_id, user_id, "delete", "files/user_file")
+
+    # User should NOT be able to delete admin's file
+    assert not authz.check_permission(channel_id, user_id, "delete", "files/admin_file")
+
+
+def test_owned_create_always_allowed(state_store, authz, admin_keypair, user_keypair):
+    """Test that must_be_owner=true doesn't restrict create operations"""
+    channel_id = admin_keypair['channel_id']
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+    user_id = user_keypair['user_id']
+
+    # Add the user to the channel
+    user_info = {"user_id": user_id}
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Grant user ownership-restricted create permission
+    capability = {
+        "op": "create",
+        "path": "posts/{...}",
+        "must_be_owner": True  # Should be ignored for create
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/rights/create_owned",
+        contents=capability,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # User should be able to create (ownership check skipped for create)
+    assert authz.check_permission(channel_id, user_id, "create", "posts/new_post")
+
+
+def test_owned_nonexistent_entry(state_store, authz, admin_keypair, user_keypair):
+    """Test that must_be_owner=true denies access to non-existent entries"""
+    channel_id = admin_keypair['channel_id']
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+    user_id = user_keypair['user_id']
+
+    # Add the user to the channel
+    user_info = {"user_id": user_id}
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Grant user ownership-restricted modify permission
+    capability = {
+        "op": "modify",
+        "path": "items/{...}",
+        "must_be_owner": True
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/rights/modify_owned_items",
+        contents=capability,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # User should NOT be able to modify non-existent entry
+    # (no entry exists, so can't verify ownership)
+    assert not authz.check_permission(channel_id, user_id, "modify", "items/nonexistent")
+
+
+def test_ownership_dominance_unrestricted_over_restricted(authz):
+    """Test that must_be_owner=false dominates must_be_owner=true"""
+    # Unrestricted capability can grant restricted capability (same op)
+    granter_caps = [
+        {"op": "modify", "path": "docs/{...}", "must_be_owner": False}
+    ]
+    requested_caps = [
+        {"op": "modify", "path": "docs/{...}", "must_be_owner": True}
+    ]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+    # Unrestricted capability can grant unrestricted capability (same op)
+    requested_caps = [
+        {"op": "modify", "path": "docs/{...}", "must_be_owner": False}
+    ]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+
+def test_ownership_restricted_cannot_grant_unrestricted(authz):
+    """Test that must_be_owner=true cannot grant must_be_owner=false"""
+    # Restricted capability CANNOT grant unrestricted capability
+    granter_caps = [
+        {"op": "modify", "path": "docs/{...}", "must_be_owner": True}
+    ]
+    requested_caps = [
+        {"op": "modify", "path": "docs/{...}", "must_be_owner": False}
+    ]
+    assert not authz._has_capability_superset(granter_caps, requested_caps)
+
+    # Restricted capability CAN grant restricted capability
+    requested_caps = [
+        {"op": "modify", "path": "docs/{...}", "must_be_owner": True}
+    ]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+
+def test_ownership_with_write_operation(authz):
+    """Test ownership dominance with write operation"""
+    # write + unrestricted can grant modify + restricted
+    granter_caps = [
+        {"op": "write", "path": "data/{...}", "must_be_owner": False}
+    ]
+    requested_caps = [
+        {"op": "modify", "path": "data/{...}", "must_be_owner": True}
+    ]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+    # write + unrestricted can grant modify + unrestricted
+    requested_caps = [
+        {"op": "modify", "path": "data/{...}", "must_be_owner": False}
+    ]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+    # write + restricted CANNOT grant modify + unrestricted
+    granter_caps = [
+        {"op": "write", "path": "data/{...}", "must_be_owner": True}
+    ]
+    requested_caps = [
+        {"op": "modify", "path": "data/{...}", "must_be_owner": False}
+    ]
+    assert not authz._has_capability_superset(granter_caps, requested_caps)
+
+    # write + restricted CAN grant modify + restricted
+    requested_caps = [
+        {"op": "modify", "path": "data/{...}", "must_be_owner": True}
+    ]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+
+def test_ownership_default_is_unrestricted(authz):
+    """Test that missing must_be_owner field defaults to false (unrestricted)"""
+    # Capability without must_be_owner field is unrestricted
+    granter_caps = [
+        {"op": "modify", "path": "docs/{...}"}  # No must_be_owner field
+    ]
+    requested_caps = [
+        {"op": "modify", "path": "docs/{...}", "must_be_owner": True}
+    ]
+    # Should work because missing must_be_owner defaults to false (unrestricted)
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+    # Can also grant unrestricted
+    requested_caps = [
+        {"op": "modify", "path": "docs/{...}", "must_be_owner": False}
+    ]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+    # Can also grant capability without must_be_owner field
+    requested_caps = [
+        {"op": "modify", "path": "docs/{...}"}
+    ]
+    assert authz._has_capability_superset(granter_caps, requested_caps)

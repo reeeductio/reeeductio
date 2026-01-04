@@ -6,6 +6,7 @@ Implements:
 - Path pattern matching with wildcards
 - Permission checking (read/create/modify/delete/write)
 - Capability subset validation (prevent privilege escalation)
+- Ownership-restricted capabilities
 
 Operations:
 - read: Read-only access
@@ -13,6 +14,15 @@ Operations:
 - modify: Write access, but only if object ALREADY exists
 - delete: Delete access (remove existing objects)
 - write: Full write access (dominates create, modify, and delete)
+
+Ownership Restriction:
+- Capabilities can include an optional "must_be_owner": true flag
+- When must_be_owner=true, the capability only applies to objects created by the user
+  (where signed_by matches the user's ID)
+- For create operations, must_be_owner flag is ignored (you'll own what you create)
+- For other operations, ownership is verified via lazy state entry lookup
+- Ownership creates a second dimension in the capability lattice:
+  * must_be_owner=false (unrestricted) dominates must_be_owner=true (ownership-restricted)
 """
 
 from typing import Optional, List, Dict, Any
@@ -90,6 +100,9 @@ class AuthorizationEngine:
         """
         Check if user or tool has permission for an operation on a state path
 
+        Supports ownership-restricted capabilities with lazy state entry loading.
+        State entry is only loaded when a matching capability has must_be_owner=true.
+
         Args:
             channel_id: Channel identifier
             member_id: User or tool typed identifier
@@ -104,9 +117,11 @@ class AuthorizationEngine:
             # Load tool capabilities only
             capabilities = self._load_tool_capabilities(channel_id, member_id)
 
-            # Check if any capability grants permission
+            # Check if any capability grants permission (with ownership check)
             for cap in capabilities:
-                if self._capability_grants_permission(cap, operation, state_path, member_id):
+                if self._check_capability_with_ownership(
+                    cap, operation, state_path, member_id, channel_id
+                ):
                     return True
 
             return False
@@ -133,12 +148,68 @@ class AuthorizationEngine:
         # Combine all capabilities
         all_capabilities = capabilities + role_capabilities
 
-        # Check if any capability grants permission
+        # Check if any capability grants permission (with ownership check)
         for cap in all_capabilities:
-            if self._capability_grants_permission(cap, operation, state_path, member_id):
+            if self._check_capability_with_ownership(
+                cap, operation, state_path, member_id, channel_id
+            ):
                 return True
 
         return False
+
+    def _check_capability_with_ownership(
+        self,
+        capability: dict,
+        operation: str,
+        state_path: str,
+        member_id: str,
+        channel_id: str
+    ) -> bool:
+        """
+        Check if a capability grants permission, with lazy ownership verification.
+
+        This method:
+        1. First checks path and operation (cheap)
+        2. Only if those match AND must_be_owner=true, loads state entry (expensive)
+        3. Verifies ownership by comparing signed_by field
+
+        Args:
+            capability: Capability dict with 'op', 'path', and optional 'must_be_owner'
+            operation: Operation being performed
+            state_path: State path being accessed
+            member_id: User or tool identifier
+            channel_id: Channel identifier (for state lookup)
+
+        Returns:
+            True if capability grants permission
+        """
+        # First check path and operation (cheap)
+        if not self._capability_grants_permission(capability, operation, state_path, member_id):
+            return False
+
+        # Path and operation match! Now check ownership if needed
+        must_be_owner = capability.get("must_be_owner", False)
+
+        if not must_be_owner:
+            # Non-ownership-restricted capability grants access immediately
+            return True
+
+        # Ownership-restricted capability - need to verify ownership
+        # Special case: create operations are always allowed
+        # (you'll become the owner when you create it)
+        if operation == "create":
+            return True
+
+        # For other operations, verify ownership via state entry lookup
+        # This is the lazy loading - only happens when needed
+        state_entry = self.state_store.get_state(channel_id, state_path)
+
+        if not state_entry:
+            # No entry exists, so you can't own it
+            return False
+
+        # Check if member owns this entry
+        return state_entry.get("signed_by") == member_id
     
     def _load_user_capabilities(
         self,
@@ -657,10 +728,17 @@ class AuthorizationEngine:
 
         This prevents privilege escalation - you can't grant what you don't have.
 
-        Operation hierarchy:
-        - write dominates everything (create, modify, delete, read)
-        - create, modify, and delete are independent (none dominates the others)
-        - read is independent
+        Two-dimensional capability lattice:
+        1. Operation hierarchy:
+           - write dominates everything (create, modify, delete, read)
+           - create, modify, and delete are independent (none dominates the others)
+           - read is independent
+        2. Ownership hierarchy:
+           - must_be_owner=false (unrestricted) dominates must_be_owner=true (restricted)
+
+        A granter capability covers a requested capability if it dominates in BOTH dimensions:
+        - Operation must be equal or stronger
+        - Ownership restriction must be equal or weaker (less restrictive)
 
         Args:
             granter_caps: Capabilities the granter has
@@ -672,6 +750,7 @@ class AuthorizationEngine:
         for req_cap in requested_caps:
             req_op = req_cap["op"]
             req_path = req_cap["path"]
+            req_must_be_owner = req_cap.get("must_be_owner", False)
 
             # Check if granter has matching or stronger capability
             has_capability = False
@@ -679,6 +758,7 @@ class AuthorizationEngine:
             for grant_cap in granter_caps:
                 grant_op = grant_cap["op"]
                 grant_path = grant_cap["path"]
+                grant_must_be_owner = grant_cap.get("must_be_owner", False)
 
                 # Path must match or be a superset
                 # grant_path="/state/*" covers req_path="/state/members/"
@@ -686,22 +766,30 @@ class AuthorizationEngine:
                     continue
 
                 # Operation must be equal or stronger
+                op_dominates = False
                 if grant_op == "write":
                     # write covers everything (create, modify, delete, read)
-                    has_capability = True
-                    break
-                elif grant_op == "create" and req_op == "create":
-                    has_capability = True
-                    break
-                elif grant_op == "modify" and req_op == "modify":
-                    has_capability = True
-                    break
-                elif grant_op == "delete" and req_op == "delete":
-                    has_capability = True
-                    break
-                elif grant_op == "read" and req_op == "read":
-                    has_capability = True
-                    break
+                    op_dominates = True
+                elif grant_op == req_op:
+                    # Same operation
+                    op_dominates = True
+                # else: different ops, neither dominates (create/modify/delete/read are independent)
+
+                if not op_dominates:
+                    continue
+
+                # Ownership restriction must be equal or weaker (less restrictive)
+                # must_be_owner=false (unrestricted) dominates must_be_owner=true (restricted)
+                # In other words: grant_must_be_owner <= req_must_be_owner
+                # (false=0 <= true=1, so false can grant both false and true)
+                if grant_must_be_owner and not req_must_be_owner:
+                    # Granter has must_be_owner=true, but requester wants must_be_owner=false
+                    # Ownership-restricted capability can't grant unrestricted capability
+                    continue
+
+                # Both operation and ownership scope dominate!
+                has_capability = True
+                break
 
             if not has_capability:
                 return False
