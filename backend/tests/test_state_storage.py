@@ -1,7 +1,7 @@
 """
 Generic tests for state storage backends
 
-These test functions can be used with any StateStore implementation.
+These test functions can be used with any DataStore implementation.
 """
 import pytest
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 # Add tests directory to path to import conftest
 sys.path.insert(0, str(Path(__file__).parent))
 
-from state_store import StateStore
+from data_store import DataStore
 import conftest
 sign_state_entry = conftest.sign_state_entry
 sign_and_store_state = conftest.sign_and_store_state
@@ -21,7 +21,7 @@ sign_and_store_state = conftest.sign_and_store_state
 # Generic Test Functions
 # ============================================================================
 
-def generic_state_set_and_get(state_store: StateStore, space_id: str, admin_keypair: dict):
+def generic_state_set_and_get(state_store: DataStore, space_id: str, admin_keypair: dict):
     """Generic test for basic state set and get operations"""
     data = {"public_key": "alice_key", "added_at": 12345}
 
@@ -43,7 +43,7 @@ def generic_state_set_and_get(state_store: StateStore, space_id: str, admin_keyp
     assert state["signed_at"] == 12345
 
 
-def generic_state_update(state_store: StateStore, space_id: str, admin_keypair: dict, user_keypair: dict):
+def generic_state_update(state_store: DataStore, space_id: str, admin_keypair: dict, user_keypair: dict):
     """Generic test for updating existing state"""
     data1 = {"value": 1}
     sign_and_store_state(
@@ -76,7 +76,7 @@ def generic_state_update(state_store: StateStore, space_id: str, admin_keypair: 
     assert state["signed_at"] == 200
 
 
-def generic_state_delete(state_store: StateStore, space_id: str, admin_keypair: dict):
+def generic_state_delete(state_store: DataStore, space_id: str, admin_keypair: dict):
     """Generic test for state deletion"""
     data = {"test": "data"}
 
@@ -100,7 +100,7 @@ def generic_state_delete(state_store: StateStore, space_id: str, admin_keypair: 
     assert state_store.get_state(space_id, "temp/data") is None
 
 
-def generic_state_list_by_prefix(state_store: StateStore, space_id: str, admin_keypair: dict):
+def generic_state_list_by_prefix(state_store: DataStore, space_id: str, admin_keypair: dict):
     """Generic test for listing state by prefix"""
     # Create multiple state entries
     for i in range(5):
@@ -143,13 +143,13 @@ def generic_state_list_by_prefix(state_store: StateStore, space_id: str, admin_k
         assert config["path"].startswith("config-count/")
 
 
-def generic_state_nonexistent(state_store: StateStore, space_id: str):
+def generic_state_nonexistent(state_store: DataStore, space_id: str):
     """Generic test for getting nonexistent state"""
     state = state_store.get_state(space_id, "does/not/exist")
     assert state is None
 
 
-def generic_state_multiple_spaces(state_store: StateStore, space_id: str, admin_keypair: dict):
+def generic_state_multiple_spaces(state_store: DataStore, space_id: str, admin_keypair: dict):
     """Generic test for state isolation between spaces"""
     data = {"test": "data"}
 

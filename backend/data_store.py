@@ -1,7 +1,7 @@
 """
 State storage abstraction layer for E2EE messaging system
 
-Provides a base StateStore interface and concrete implementations for
+Provides a base DataStore interface and concrete implementations for
 storing space state in different backends (SQLite, LMDB, DynamoDB, etc.)
 """
 
@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Any, Union
 from lru_cache import LRUCache
 
 
-class StateStore(ABC):
+class DataStore(ABC):
     """Abstract base class for state storage backends"""
 
     def __init__(self):

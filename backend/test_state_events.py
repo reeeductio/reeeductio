@@ -11,7 +11,7 @@ import os
 import tempfile
 import base64
 import json
-from sqlite_state_store import SqliteStateStore
+from sqlite_data_store import SqliteDataStore
 from sqlite_message_store import SqliteMessageStore
 from space import Space
 from crypto import CryptoUtils
@@ -25,7 +25,7 @@ def test_state_events_dual_write():
         message_db = os.path.join(tmpdir, "messages.db")
 
         # Initialize stores
-        state_store = SqliteStateStore(state_db)
+        state_store = SqliteDataStore(state_db)
         message_store = SqliteMessageStore(message_db)
 
         # Create a space

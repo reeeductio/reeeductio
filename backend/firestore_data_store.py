@@ -1,5 +1,5 @@
 """
-Firestore implementation of StateStore for E2EE messaging system
+Firestore implementation of DataStore for E2EE messaging system
 
 Uses Google Cloud Firestore (in Datastore mode) for state persistence.
 Supports multi-instance deployments with automatic consistency.
@@ -8,10 +8,10 @@ Supports multi-instance deployments with automatic consistency.
 from typing import Optional, List, Dict, Any
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
-from state_store import StateStore
+from data_store import DataStore
 
 
-class FirestoreStateStore(StateStore):
+class FirestoreDataStore(DataStore):
     """Firestore-based state storage implementation"""
 
     def __init__(self, project_id: Optional[str] = None, database_id: str = "(default)"):

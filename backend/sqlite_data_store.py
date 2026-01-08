@@ -1,5 +1,5 @@
 """
-SQLite implementation of StateStore
+SQLite implementation of DataStore
 
 Stores space state in a SQLite database. All state data is stored
 as base64-encoded strings; interpretation is context-dependent.
@@ -7,11 +7,11 @@ as base64-encoded strings; interpretation is context-dependent.
 
 import sqlite3
 from contextlib import contextmanager
-from sql_state_store import SqlStateStore
+from sql_data_store import SqlDataStore
 from lru_cache import LRUCache
 
 
-class SqliteStateStore(SqlStateStore):
+class SqliteDataStore(SqlDataStore):
     """Store space state in SQLite database"""
 
     def __init__(self, db_path: str, cache_size: int = 1000):

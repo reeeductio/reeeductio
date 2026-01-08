@@ -24,7 +24,7 @@ from blob_store import BlobMetadata, BlobReference, BlobStore
 from filesystem_blob_store import FilesystemBlobStore
 from sqlite_blob_store import SqliteBlobStore
 from space import Space
-from sqlite_state_store import SqliteStateStore
+from sqlite_data_store import SqliteDataStore
 from sqlite_message_store import SqliteMessageStore
 from crypto import CryptoUtils
 import base64
@@ -176,7 +176,7 @@ class TestSpaceBlobAuthorization:
     def space(self, temp_db_path, admin_keypair):
         """Create a test space"""
         space_id = admin_keypair['space_id']
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         message_store = SqliteMessageStore(temp_db_path)
 
         space = Space(
@@ -388,7 +388,7 @@ class TestBlobAuthorizationIntegration:
         admin_id = admin_keypair['user_id']
         admin_private = admin_keypair['private']
         user_id = user_keypair['user_id']
-        state_store = SqliteStateStore(temp_db_path + "_state")
+        state_store = SqliteDataStore(temp_db_path + "_state")
         message_store = SqliteMessageStore(temp_db_path + "_msg")
 
         space = Space(
@@ -486,7 +486,7 @@ class TestBlobAuthorizationIntegration:
         # Space 1
         space1_key = ed25519.Ed25519PrivateKey.generate()
         space1_id = admin_keypair['space_id']
-        state_store1 = SqliteStateStore(temp_db_path + "_ch1")
+        state_store1 = SqliteDataStore(temp_db_path + "_ch1")
         message_store1 = SqliteMessageStore(temp_db_path + "_msg1")
         space1 = Space(
             space_id=space1_id,
@@ -501,7 +501,7 @@ class TestBlobAuthorizationIntegration:
         space2_pub = space2_key.public_key().public_bytes_raw()
         from identifiers import encode_space_id
         space2_id = encode_space_id(space2_pub)
-        state_store2 = SqliteStateStore(temp_db_path + "_ch2")
+        state_store2 = SqliteDataStore(temp_db_path + "_ch2")
         message_store2 = SqliteMessageStore(temp_db_path + "_msg2")
         space2 = Space(
             space_id=space2_id,
@@ -535,7 +535,7 @@ class TestBlobAuthorizationIntegration:
 
         # Create two spaces
         space1_id = admin_keypair['space_id']
-        state_store1 = SqliteStateStore(temp_db_path + "_ch1")
+        state_store1 = SqliteDataStore(temp_db_path + "_ch1")
         message_store1 = SqliteMessageStore(temp_db_path + "_msg1")
         space1 = Space(
             space_id=space1_id,
@@ -548,7 +548,7 @@ class TestBlobAuthorizationIntegration:
         space2_key = ed25519.Ed25519PrivateKey.generate()
         space2_pub = space2_key.public_key().public_bytes_raw()
         space2_id = encode_space_id(space2_pub)
-        state_store2 = SqliteStateStore(temp_db_path + "_ch2")
+        state_store2 = SqliteDataStore(temp_db_path + "_ch2")
         message_store2 = SqliteMessageStore(temp_db_path + "_msg2")
         space2 = Space(
             space_id=space2_id,

@@ -23,7 +23,7 @@ from config import get_config, FirestoreDatabaseConfig
 from s3_blob_store import S3BlobStore
 from sqlite_blob_store import SqliteBlobStore
 from filesystem_blob_store import FilesystemBlobStore
-from firestore_state_store import FirestoreStateStore
+from firestore_data_store import FirestoreDataStore
 from firestore_message_store import FirestoreMessageStore
 from space_manager import SpaceManager
 from logging_config import setup_logging, get_logger
@@ -77,7 +77,7 @@ if isinstance(config.database, FirestoreDatabaseConfig):
     database_id = config.database.database_id
     logger.info(f"Using Firestore database: project={project_id}, database={database_id}")
 
-    state_store_factory = lambda: FirestoreStateStore(project_id, database_id)
+    state_store_factory = lambda: FirestoreDataStore(project_id, database_id)
     message_store_factory = lambda: FirestoreMessageStore(project_id, database_id)
 else:
     logger.info("Using SQLite database (per-space stores)")
@@ -257,8 +257,121 @@ async def auth_refresh(
 
 
 # ============================================================================
-# State Endpoints
+# Data Endpoints (Simple Key-Value Store)
 # ============================================================================
+
+@app.get("/spaces/{space_id}/data/{path:path}", response_model=StateResponse)
+async def get_data(
+    space_id: str,
+    path: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Get simple key-value data from space"""
+    space = space_manager.get_space(space_id)
+
+    try:
+        state = space.get_state(path, credentials.credentials)
+        return StateResponse(**state)
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
+
+
+@app.put("/spaces/{space_id}/data/{path:path}")
+async def put_data(
+    space_id: str,
+    path: str,
+    state_data: StateData,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Set simple key-value data in space"""
+    space = space_manager.get_space(space_id)
+
+    try:
+        updated_at = space.set_state(
+            path,
+            state_data.data,
+            credentials.credentials,
+            state_data.signature,
+            state_data.signed_by,
+            state_data.signed_at
+        )
+        return {"path": path, "signed_at": updated_at}
+    except ValueError as e:
+        error_msg = str(e)
+        if "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        elif "required" in error_msg.lower() or "must be" in error_msg.lower() or "invalid" in error_msg.lower() or "signature" in error_msg.lower():
+            raise HTTPException(status_code=400, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
+
+
+@app.delete("/spaces/{space_id}/data/{path:path}")
+async def delete_data(
+    space_id: str,
+    path: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Delete simple key-value data from space"""
+    space = space_manager.get_space(space_id)
+
+    try:
+        space.delete_state(path, credentials.credentials)
+        return Response(status_code=204)
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
+
+
+# ============================================================================
+# State Endpoints (Event-Sourced Key-Value Store)
+# ============================================================================
+
+@app.get("/spaces/{space_id}/state", response_model=MessagesResponse)
+async def list_state(
+    space_id: str,
+    from_ts: Optional[int] = Query(None, alias="from"),
+    to_ts: Optional[int] = Query(None, alias="to"),
+    limit: int = Query(100, ge=1, le=1000),
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Query all state messages from the 'state' topic.
+
+    This is effectively an alias for GET /topics/state/messages.
+    State is stored as messages with the state path in the 'type' field.
+    """
+    space = space_manager.get_space(space_id)
+
+    try:
+        messages = space.get_messages("state", credentials.credentials, from_ts, to_ts, limit + 1)
+
+        has_more = len(messages) > limit
+        if has_more:
+            messages = messages[:limit]
+
+        return MessagesResponse(
+            messages=[Message(**msg) for msg in messages],
+            has_more=has_more
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        if "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
+
 
 @app.get("/spaces/{space_id}/state/{path:path}", response_model=StateResponse)
 async def get_state(
@@ -266,7 +379,11 @@ async def get_state(
     path: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Get state value from space"""
+    """
+    Get current materialized state at a specific path.
+
+    The server computes this from the state store (materialized view of state topic).
+    """
     space = space_manager.get_space(space_id)
 
     try:

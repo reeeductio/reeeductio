@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Any, Set
 from fastapi import WebSocket
 import json
 
-from state_store import StateStore
+from data_store import DataStore
 from message_store import MessageStore
 from crypto import CryptoUtils
 from blob_store import BlobStore
@@ -45,7 +45,7 @@ class Space:
     def __init__(
         self,
         space_id: str,
-        state_store: StateStore,
+        state_store: DataStore,
         message_store: MessageStore,
         blob_store: Optional[BlobStore] = None,
         jwt_secret: Optional[str] = None,
@@ -440,7 +440,7 @@ class Space:
         # Get chain head BEFORE authorization check (this is our "lock version")
         import hashlib
         message_hash = hashlib.sha256(data.encode('utf-8')).hexdigest()
-        head = self.message_store.get_chain_head(self.space_id, "state-events")
+        head = self.message_store.get_chain_head(self.space_id, "state")
         prev_hash = head["message_hash"] if head else None
 
         # Write to BOTH stores (dual-write for event sourcing)
@@ -451,7 +451,7 @@ class Space:
             #    If this succeeds, we own the new chain head
             self.message_store.add_message(
                 space_id=self.space_id,
-                topic_id="state-events",
+                topic_id="state",
                 message_hash=message_hash,
                 msg_type=path,  # State path IS the message type!
                 prev_hash=prev_hash,
@@ -534,7 +534,7 @@ class Space:
         # Hash includes path and timestamp to ensure uniqueness
         deletion_marker = f"delete:{path}:{current_time}"
         message_hash = hashlib.sha256(deletion_marker.encode('utf-8')).hexdigest()
-        head = self.message_store.get_chain_head(self.space_id, "state-events")
+        head = self.message_store.get_chain_head(self.space_id, "state")
         prev_hash = head["message_hash"] if head else None
 
         # Write to BOTH stores (dual-write for event sourcing)
@@ -544,7 +544,7 @@ class Space:
             # 1. Write deletion event to state-events topic (CAS on chain head)
             self.message_store.add_message(
                 space_id=self.space_id,
-                topic_id="state-events",
+                topic_id="state",
                 message_hash=message_hash,
                 msg_type=path,  # State path IS the message type
                 prev_hash=prev_hash,
@@ -609,7 +609,7 @@ class Space:
         # Get all state events (ordered chronologically)
         events = self.message_store.get_messages(
             space_id=self.space_id,
-            topic_id="state-events",
+            topic_id="state",
             limit=100000  # Get all events
         )
 
@@ -733,7 +733,7 @@ class Space:
             raise ValueError("Invalid message signature")
 
         # For state-events topic, also check state-specific authorization
-        if topic_id == "state-events":
+        if topic_id == "state":
             path = msg_type  # Path is stored in the type field for state events
 
             # Determine operation type based on data and existing state
@@ -772,7 +772,7 @@ class Space:
             self._increment_tool_usage(sender)
 
         # If this is a state event, update the state store cache
-        if topic_id == "state-events":
+        if topic_id == "state":
             message_dict = {
                 "type": msg_type,  # Path is in type field
                 "data": data,

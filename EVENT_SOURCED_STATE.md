@@ -8,7 +8,7 @@ This document describes the event-sourced state management architecture implemen
 
 ### 1. Messages as Source of Truth
 
-State changes are represented as messages in the `state-events` topic. The message chain provides:
+State changes are represented as messages in the `state` topic. The message chain provides:
 - **Immutable audit log** - Every state change is recorded
 - **Causal ordering** - Changes are sequenced via prev_hash references
 - **Conflict detection** - Concurrent writes are detected via chain validation
@@ -21,13 +21,13 @@ The state store (`StateStore` implementations) provides:
 - **Query capabilities** - List states by prefix, range queries
 - **Eventual consistency** - Synchronized with message chain
 
-The state store can be rebuilt at any time by replaying the state-events topic.
+The state store can be rebuilt at any time by replaying the state topic.
 
 ### 3. Dual Authorization
 
-State modifications via the state-events topic require two levels of authorization:
+State modifications via the state topic require two levels of authorization:
 
-1. **Topic-level**: Can the user post to the `state-events` topic?
+1. **Topic-level**: Can the user post to the `state` topic?
 2. **State-level**: Can the user create/modify/delete that specific state path?
 
 This prevents privilege escalation where a user with limited state access tries to modify unauthorized paths.
@@ -36,7 +36,7 @@ This prevents privilege escalation where a user with limited state access tries 
 
 ### Message Structure for State Events
 
-State changes are posted as messages to the `state-events` topic with this structure:
+State changes are posted as messages to the `state` topic with this structure:
 
 ```python
 {
@@ -84,7 +84,7 @@ space.set_state(path, data, token, signature, signed_by, signed_at)
 ```
 
 This performs **dual write**:
-1. Writes to state-events topic (source of truth)
+1. Writes to state topic (source of truth)
 2. Writes to state store (cache)
 
 Implementation in [space.py:442-523](backend/space.py#L442-L523):
@@ -103,7 +103,7 @@ def set_state(self, path: str, data: str, token: str,
     message_hash = self.compute_message_hash(...)
     self.message_store.add_message(
         space_id=self.space_id,
-        topic_id="state-events",
+        topic_id="state",
         message_hash=message_hash,
         msg_type=path,  # Path goes in type field
         ...
@@ -119,7 +119,7 @@ Used by clients to modify state:
 
 ```python
 await space.post_message(
-    topic_id="state-events",
+    topic_id="state",
     message_hash=computed_hash,
     msg_type=state_path,
     data=base64_data,
@@ -146,8 +146,8 @@ async def post_message(self, topic_id: str, message_hash: str,
     if not self.check_permission(sender, "create", topic_path):
         raise ValueError("No post permission")
 
-    # 4. For state-events, also check state-level permission
-    if topic_id == "state-events":
+    # 4. For state, also check state-level permission
+    if topic_id == "state":
         path = msg_type  # Path is in type field
 
         # Determine operation: create, modify, or delete
@@ -165,7 +165,7 @@ async def post_message(self, topic_id: str, message_hash: str,
     self.message_store.add_message(...)
 
     # 6. Update state cache if this is a state event
-    if topic_id == "state-events":
+    if topic_id == "state":
         self._apply_state_event({
             "type": msg_type,
             "data": data,
@@ -214,13 +214,13 @@ def _apply_state_event(self, message: Dict[str, Any]) -> None:
 
 ### State Reconstruction
 
-The state store can be rebuilt by replaying the state-events topic:
+The state store can be rebuilt by replaying the state topic:
 
 ```python
 def rebuild_state_from_events(space_id: str, message_store, state_store):
-    """Rebuild state store by replaying state-events topic"""
+    """Rebuild state store by replaying state topic"""
     # Get all state events in order
-    events = message_store.get_messages(space_id, "state-events")
+    events = message_store.get_messages(space_id, "state")
 
     # Apply each event in sequence
     for event in events:
@@ -284,7 +284,7 @@ The dual authorization prevents privilege escalation attacks:
 **Attack scenario**: User with `profiles/{user_id}/*` permission tries to grant themselves `auth/*` permission.
 
 **Prevention**:
-1. User can post to `state-events` topic (has topic-level capability)
+1. User can post to `state` topic (has topic-level capability)
 2. User tries to create state at `auth/users/{user_id}/rights/cap_admin`
 3. State-level check fails: user lacks `create` permission for `auth/` paths
 4. Message is rejected before being committed to chain
@@ -414,7 +414,7 @@ New client code should use the message API:
 # Compute message hash
 message_hash = compute_message_hash(
     space_id=space_id,
-    topic_id="state-events",
+    topic_id="state",
     prev_hash=chain_head,
     encrypted_payload=data,
     sender=user_id
@@ -423,9 +423,9 @@ message_hash = compute_message_hash(
 # Sign message
 signature = sign_message(message_hash, private_key)
 
-# Post to state-events topic
+# Post to state topic
 await space.post_message(
-    topic_id="state-events",
+    topic_id="state",
     message_hash=message_hash,
     msg_type=state_path,
     prev_hash=chain_head,
@@ -469,7 +469,7 @@ Create read-only replicas for scaling:
 
 ```python
 # Primary: Handles writes, updates state cache
-# Replicas: Subscribe to state-events, maintain read-only cache
+# Replicas: Subscribe to state, maintain read-only cache
 # Benefit: Horizontal read scaling
 ```
 
@@ -481,7 +481,7 @@ Notify clients of state changes via WebSocket:
 # Client subscribes to state path pattern
 subscribe("auth/users/{user_id}/*")
 
-# Server pushes state-events matching pattern
+# Server pushes state matching pattern
 on_state_event(event => {
     update_local_cache(event)
     trigger_ui_update()

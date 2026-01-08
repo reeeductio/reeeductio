@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from authorization import AuthorizationEngine
-from sqlite_state_store import SqliteStateStore
+from sqlite_data_store import SqliteDataStore
 from crypto import CryptoUtils
 from identifiers import encode_tool_id, encode_user_id, encode_space_id, extract_public_key
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -30,7 +30,7 @@ set_space_state = conftest.set_space_state
 @pytest.fixture
 def authz(temp_db_path):
     """Create AuthorizationEngine with temp storage"""
-    state_store = SqliteStateStore(temp_db_path)
+    state_store = SqliteDataStore(temp_db_path)
     crypto = CryptoUtils()
     return AuthorizationEngine(state_store, crypto)
 
@@ -80,7 +80,7 @@ class TestToolNoAmbientAuthority:
         tool_id = tool_keypair['tool_id']
 
         # Create some state
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         sign_and_store_state(
             space_id=space_id,
             path="test/data",
@@ -121,7 +121,7 @@ class TestToolWithCapabilities:
         tool_id = tool_keypair['tool_id']
         admin_private = admin_keypair['private']
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         crypto = CryptoUtils()
 
         # First, register the tool in the space (required for chain of trust)
@@ -163,7 +163,7 @@ class TestToolWithCapabilities:
         tool_id = tool_keypair['tool_id']
         admin_private = admin_keypair['private']
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         crypto = CryptoUtils()
 
         # First, register the tool in the space
@@ -209,7 +209,7 @@ class TestToolWithCapabilities:
         tool_id = tool_keypair['tool_id']
         admin_private = admin_keypair['private']
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         crypto = CryptoUtils()
 
         # First, register the tool in the space
@@ -354,7 +354,7 @@ class TestToolCreationValidation:
         admin_id = admin_keypair['user_id']
         admin_private = admin_keypair['private']
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         crypto = CryptoUtils()
 
         # First, add the user to the space (required for chain of trust)
@@ -416,7 +416,7 @@ class TestToolCreationValidation:
         admin_private = admin_keypair['private']
         user_private = user_keypair['private']
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         crypto = CryptoUtils()
 
         # First, add the user to the space (required for chain of trust)
@@ -512,7 +512,7 @@ class TestToolAuthentication:
         admin_private = admin_keypair['private']
         tool_private = tool_keypair['private']
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         message_store = SqliteMessageStore(temp_db_path)
         crypto = CryptoUtils()
 
@@ -588,7 +588,7 @@ class TestToolAuthentication:
         tool_id = tool_keypair['tool_id']
         tool_private = tool_keypair['private']
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         message_store = SqliteMessageStore(temp_db_path)
 
         # Create space
@@ -635,14 +635,14 @@ class TestToolUseLimiting:
     def test_unlimited_tool_can_write_multiple_times(self, temp_db_path, admin_keypair, tool_keypair, crypto):
         """Tools without use_limit can write unlimited times"""
         from space import Space
-        from sqlite_state_store import SqliteStateStore
+        from sqlite_data_store import SqliteDataStore
         from sqlite_message_store import SqliteMessageStore
 
         admin_private = admin_keypair['private']
         admin_id = admin_keypair['user_id']
         space_id = encode_space_id(admin_keypair['public_bytes'])
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         message_store = SqliteMessageStore(temp_db_path)
 
         tool_id = tool_keypair['tool_id']
@@ -714,7 +714,7 @@ class TestToolUseLimiting:
     def test_limited_tool_enforces_use_limit(self, temp_db_path, tool_keypair, admin_keypair, crypto):
         """Tools with use_limit should be limited to that many writes"""
         from space import Space
-        from sqlite_state_store import SqliteStateStore
+        from sqlite_data_store import SqliteDataStore
         from sqlite_message_store import SqliteMessageStore
 
         admin_id = admin_keypair['user_id']
@@ -722,7 +722,7 @@ class TestToolUseLimiting:
         admin_private = admin_keypair['private']
         space_id = encode_space_id(admin_public)
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         message_store = SqliteMessageStore(temp_db_path)
 
         # Create space
@@ -782,7 +782,7 @@ class TestToolUseLimiting:
     def test_tool_limit_only_counts_successful_writes(self, temp_db_path, tool_keypair, admin_keypair, crypto):
         """Failed writes should not increment tool usage counter"""
         from space import Space
-        from sqlite_state_store import SqliteStateStore
+        from sqlite_data_store import SqliteDataStore
         from sqlite_message_store import SqliteMessageStore
 
         admin_id = admin_keypair['user_id']
@@ -791,7 +791,7 @@ class TestToolUseLimiting:
         tool_id = tool_keypair['tool_id']
         tool_private = tool_keypair['private']
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         message_store = SqliteMessageStore(temp_db_path)
 
         # Create space
@@ -842,9 +842,9 @@ class TestToolUseLimiting:
 
     def test_tool_usage_tracking_in_state_store(self, temp_db_path):
         """Test that state store correctly tracks tool usage"""
-        from sqlite_state_store import SqliteStateStore
+        from sqlite_data_store import SqliteDataStore
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         space_id = "test_space"
         tool_id = "T_test_tool"
 
@@ -886,7 +886,7 @@ class TestToolUseLimiting:
     def test_regular_users_not_subject_to_use_limits(self, temp_db_path, user_keypair, admin_keypair):
         """Regular users (U_*) should not be subject to use limits"""
         from space import Space
-        from sqlite_state_store import SqliteStateStore
+        from sqlite_data_store import SqliteDataStore
         from sqlite_message_store import SqliteMessageStore
 
         user_id = user_keypair['user_id']
@@ -895,7 +895,7 @@ class TestToolUseLimiting:
         admin_private = admin_keypair['private']
         space_id = admin_keypair['space_id']
 
-        state_store = SqliteStateStore(temp_db_path)
+        state_store = SqliteDataStore(temp_db_path)
         message_store = SqliteMessageStore(temp_db_path)
 
         # Create space

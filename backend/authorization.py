@@ -26,7 +26,7 @@ Ownership Restriction:
 """
 
 from typing import Optional, List, Dict, Any
-from state_store import StateStore
+from data_store import DataStore
 from crypto import CryptoUtils
 from identifiers import extract_public_key, decode_identifier, IdType
 from path_validation import validate_capability_path, PathValidationError
@@ -39,7 +39,7 @@ import time
 class AuthorizationEngine:
     """Capability-based authorization with signed permissions"""
 
-    def __init__(self, state_store: StateStore, crypto: CryptoUtils):
+    def __init__(self, state_store: DataStore, crypto: CryptoUtils):
         self.state_store = state_store
         self.crypto = crypto
         # Cache for validated public key chains: (space_id, member_id) -> bool

@@ -1,5 +1,5 @@
 """
-SQL-based implementation of StateStore
+SQL-based implementation of DataStore
 
 Provides a common base class for SQL database implementations (SQLite, PostgreSQL, MySQL)
 with database-agnostic SQL queries. Concrete classes only need to implement connection
@@ -9,10 +9,10 @@ management and placeholder formatting.
 from abc import abstractmethod
 from typing import Optional, List, Dict, Any, Union, ContextManager
 from contextlib import contextmanager
-from state_store import StateStore
+from data_store import DataStore
 
 
-class SqlStateStore(StateStore):
+class SqlDataStore(DataStore):
     """
     Abstract SQL-based state store
 

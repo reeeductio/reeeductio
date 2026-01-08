@@ -4,7 +4,7 @@ Tests for Role-Based Access Control (RBAC)
 
 import pytest
 from authorization import AuthorizationEngine
-from sqlite_state_store import SqliteStateStore
+from sqlite_data_store import SqliteDataStore
 from crypto import CryptoUtils
 from identifiers import extract_public_key, encode_user_id
 

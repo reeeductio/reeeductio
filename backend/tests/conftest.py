@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from sqlite_message_store import SqliteMessageStore
-from sqlite_state_store import SqliteStateStore
+from sqlite_data_store import SqliteDataStore
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import encode_space_id, encode_user_id
@@ -70,13 +70,13 @@ def message_store(temp_db_path):
 
 @pytest.fixture
 def state_store(temp_db_path):
-    """Create a SqliteStateStore instance with temporary storage"""
-    return SqliteStateStore(temp_db_path)
+    """Create a SqliteDataStore instance with temporary storage"""
+    return SqliteDataStore(temp_db_path)
 
 @pytest.fixture
 def sqlite_state_store(temp_db_path):
-    """Create a SqliteStateStore instance with temporary storage"""
-    return SqliteStateStore(temp_db_path)
+    """Create a SqliteDataStore instance with temporary storage"""
+    return SqliteDataStore(temp_db_path)
 
 @pytest.fixture
 def crypto():
@@ -210,7 +210,7 @@ def sign_and_store_state(
     This combines create_signed_state_entry() and state_store.set_state() into a single call.
 
     Args:
-        state_store: StateStore instance to store the entry in
+        state_store: DataStore instance to store the entry in
         space_id: Space identifier
         path: State path
         contents: JSON-compatible object
@@ -383,14 +383,14 @@ def unique_space_id(request):
 @pytest.fixture
 def firestore_state_store(firestore_emulator):
     """
-    Get FirestoreStateStore for testing.
+    Get FirestoreDataStore for testing.
 
     Note: Use the unique_space_id fixture in your tests to avoid
     conflicts between tests when the emulator cleanup is slow.
     """
-    from firestore_state_store import FirestoreStateStore
+    from firestore_data_store import FirestoreDataStore
 
-    store = FirestoreStateStore(project_id='test-project')
+    store = FirestoreDataStore(project_id='test-project')
 
     yield store
 

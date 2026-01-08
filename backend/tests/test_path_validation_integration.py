@@ -4,7 +4,7 @@ Integration tests for path validation in space operations
 
 import pytest
 from space import Space
-from sqlite_state_store import SqliteStateStore
+from sqlite_data_store import SqliteDataStore
 from sqlite_message_store import SqliteMessageStore
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
@@ -28,7 +28,7 @@ set_space_state = conftest.set_space_state
 @pytest.fixture
 def space(temp_db_path, admin_keypair):
     """Create a test space"""
-    state_store = SqliteStateStore(temp_db_path)
+    state_store = SqliteDataStore(temp_db_path)
     message_store = SqliteMessageStore(temp_db_path)
 
     space_id = admin_keypair['space_id']
