@@ -250,3 +250,76 @@ class FirestoreMessageStore(MessageStore):
             'signature': doc_data['signature'],
             'server_timestamp': doc_data['server_timestamp']
         }
+
+    def initialize_tool_usage(self, space_id: str, tool_id: str) -> None:
+        """Initialize tool usage tracking for a use-limited tool."""
+        doc_ref = self.db.collection('spaces').document(space_id) \
+                        .collection('tool_usage').document(tool_id)
+
+        doc_ref.set({
+            'use_count': 0,
+            'last_used_at': None
+        })
+
+    def increment_tool_usage(self, space_id: str, tool_id: str, timestamp: int) -> int:
+        """
+        Increment tool use count and return new count using Firestore transaction.
+
+        This is operational metadata (NOT part of space state).
+
+        Args:
+            space_id: Space identifier
+            tool_id: Tool identifier (T_*)
+            timestamp: Current timestamp in milliseconds
+
+        Returns:
+            New use count after increment
+        """
+        doc_ref = self.db.collection('spaces').document(space_id) \
+                        .collection('tool_usage').document(tool_id)
+
+        @firestore.transactional
+        def update_in_transaction(transaction, doc_ref):
+            snapshot = doc_ref.get(transaction=transaction)
+
+            if snapshot.exists:
+                # Increment existing count
+                current_count = snapshot.get('use_count')
+                new_count = current_count + 1
+                transaction.update(doc_ref, {
+                    'use_count': new_count,
+                    'last_used_at': timestamp
+                })
+                return new_count
+            else:
+                # Tool not initialized
+                raise ValueError(f"Tool {tool_id} not initialized for space {space_id}")
+
+        transaction = self.db.transaction()
+        return update_in_transaction(transaction, doc_ref)
+
+    def get_tool_usage(self, space_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get tool usage statistics from Firestore.
+
+        This is operational metadata (NOT part of space state).
+
+        Args:
+            space_id: Space identifier
+            tool_id: Tool identifier (T_*)
+
+        Returns:
+            Dictionary with use_count and last_used_at, or None if not found
+        """
+        doc_ref = self.db.collection('spaces').document(space_id) \
+                        .collection('tool_usage').document(tool_id)
+
+        doc = doc_ref.get()
+        if not doc.exists:
+            return None
+
+        data = doc.to_dict()
+        return {
+            'use_count': data['use_count'],
+            'last_used_at': data.get('last_used_at')
+        }

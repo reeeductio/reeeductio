@@ -96,6 +96,23 @@ class SqlMessageStore(MessageStore):
                 ON messages(space_id, topic_id, type)
             """)
 
+            # Tool usage table - operational metadata for use-limited tools
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tool_usage (
+                    space_id TEXT NOT NULL,
+                    tool_id TEXT NOT NULL,
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    last_used_at INTEGER,
+                    PRIMARY KEY (space_id, tool_id)
+                )
+            """)
+
+            # Create index for faster tool usage queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_tool_usage_space
+                ON tool_usage(space_id)
+            """)
+
             conn.commit()
 
     def add_message(
@@ -355,4 +372,95 @@ class SqlMessageStore(MessageStore):
                 "sender": row["sender"],
                 "signature": row["signature"],
                 "server_timestamp": row["server_timestamp"]
+            }
+
+    def initialize_tool_usage(self, space_id: str, tool_id: str) -> None:
+        """
+        Initialize tool usage tracking for a use-limited tool.
+        Creates a row with use_count=0.
+        """
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ", ".join([ph(i) for i in range(3)])
+            cursor.execute(f"""
+                INSERT INTO tool_usage
+                (space_id, tool_id, use_count)
+                VALUES ({placeholders})
+            """, (space_id, tool_id, 0))
+
+    def increment_tool_usage(self, space_id: str, tool_id: str, timestamp: int) -> int:
+        """
+        Increment tool use count and return new count.
+
+        This is operational metadata (NOT part of space state).
+        Used to track and enforce use_limit for tools.
+
+        NOTE: Assumes initialize_tool_usage has been called for this tool.
+
+        Args:
+            space_id: Space identifier
+            tool_id: Tool identifier (T_*)
+            timestamp: Current timestamp in milliseconds
+
+        Returns:
+            New use count after increment
+        """
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Update existing row (should always exist for use-limited tools)
+            # Note: Parameters must be in order they appear in SQL, not by ph() number
+            cursor.execute(f"""
+                UPDATE tool_usage
+                SET use_count = use_count + 1, last_used_at = {ph(0)}
+                WHERE space_id = {ph(1)} AND tool_id = {ph(2)}
+            """, (timestamp, space_id, tool_id))
+
+            if cursor.rowcount == 0:
+                raise ValueError(f"Tool {tool_id} not initialized for space {space_id}")
+
+            # Get updated count
+            cursor.execute(f"""
+                SELECT use_count
+                FROM tool_usage
+                WHERE space_id = {ph(0)} AND tool_id = {ph(1)}
+            """, (space_id, tool_id))
+
+            row = cursor.fetchone()
+            return row["use_count"]
+
+    def get_tool_usage(self, space_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get tool usage statistics.
+
+        This is operational metadata (NOT part of space state).
+
+        Args:
+            space_id: Space identifier
+            tool_id: Tool identifier (T_*)
+
+        Returns:
+            Dictionary with use_count and last_used_at, or None if not found
+        """
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT use_count, last_used_at
+                FROM tool_usage
+                WHERE space_id = {ph(0)} AND tool_id = {ph(1)}
+            """, (space_id, tool_id))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return {
+                "use_count": row["use_count"],
+                "last_used_at": row["last_used_at"]
             }

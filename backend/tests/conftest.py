@@ -245,12 +245,39 @@ def sign_and_store_state(
 
 def set_space_state(space, path, contents, token, keypair):
         """
-        Convenience function to sign and set state in a Space
+        Convenience function to sign and set state in a Space using message format.
+
+        Handles calling the async set_state method from sync context.
         """
+        import asyncio
+        from crypto import CryptoUtils
+        crypto = CryptoUtils()
+
         data = CryptoUtils.base64_encode_object(contents)
-        timestamp = int(time.time() * 1000)
-        signature = sign_state_entry(space.space_id, path, data, keypair['private'], keypair['id'], timestamp)
-        space.set_state(path, data, token, signature, keypair['id'], timestamp)
+
+        # Get current chain head for prev_hash
+        head = space.message_store.get_chain_head(space.space_id, "state")
+        prev_hash = head["message_hash"] if head else None
+
+        # Compute message hash
+        message_hash = crypto.compute_message_hash(
+            space.space_id,
+            "state",
+            prev_hash,
+            data,
+            keypair['id']
+        )
+
+        # Sign the message hash
+        # Decode the typed identifier and convert to bytes for signing
+        from identifiers import decode_identifier
+        message_tid = decode_identifier(message_hash)
+        message_bytes = message_tid.to_bytes()
+        signature_bytes = keypair['private'].sign(message_bytes)
+        signature = crypto.base64_encode(signature_bytes)
+
+        # Call async function from sync context
+        return asyncio.run(space.set_state(path, prev_hash, data, message_hash, signature, token))
 
 # ============================================================================
 # Firestore Emulator Fixtures

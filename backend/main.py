@@ -137,19 +137,12 @@ class TokenResponse(BaseModel):
     expires_at: int
 
 
-class StateData(BaseModel):
+class KVData(BaseModel):
+    """Data item for use with /data endpoints."""
     data: str = Field(..., description="Base64-encoded state data")
     signature: str = Field(..., description="Ed25519 signature over (space_id|path|data|signed_at)")
     signed_by: str = Field(..., description="Typed user/tool identifier of signer")
     signed_at: int = Field(..., description="Unix timestamp in milliseconds when entry was signed")
-
-
-class StateResponse(BaseModel):
-    path: str
-    data: str
-    signature: str
-    signed_by: str
-    signed_at: int
 
 
 class MessagePost(BaseModel):
@@ -260,7 +253,7 @@ async def auth_refresh(
 # Data Endpoints (Simple Key-Value Store)
 # ============================================================================
 
-@app.get("/spaces/{space_id}/data/{path:path}", response_model=StateResponse)
+@app.get("/spaces/{space_id}/data/{path:path}", response_model=KVData)
 async def get_data(
     space_id: str,
     path: str,
@@ -270,8 +263,8 @@ async def get_data(
     space = space_manager.get_space(space_id)
 
     try:
-        state = space.get_state(path, credentials.credentials)
-        return StateResponse(**state)
+        state = space.get_data(path, credentials.credentials)
+        return KVData(**state)
     except ValueError as e:
         error_msg = str(e)
         if "not found" in error_msg.lower():
@@ -286,20 +279,20 @@ async def get_data(
 async def put_data(
     space_id: str,
     path: str,
-    state_data: StateData,
+    kv_data: KVData,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Set simple key-value data in space"""
     space = space_manager.get_space(space_id)
 
     try:
-        updated_at = space.set_state(
+        updated_at = space.set_data(
             path,
-            state_data.data,
-            credentials.credentials,
-            state_data.signature,
-            state_data.signed_by,
-            state_data.signed_at
+            kv_data.data,
+            kv_data.signature,
+            kv_data.signed_by,
+            kv_data.signed_at,
+            credentials.credentials
         )
         return {"path": path, "signed_at": updated_at}
     except ValueError as e:
@@ -322,7 +315,7 @@ async def delete_data(
     space = space_manager.get_space(space_id)
 
     try:
-        space.delete_state(path, credentials.credentials)
+        space.delete_data(path, credentials.credentials)
         return Response(status_code=204)
     except ValueError as e:
         error_msg = str(e)
@@ -373,7 +366,7 @@ async def list_state(
             raise HTTPException(status_code=401, detail=error_msg)
 
 
-@app.get("/spaces/{space_id}/state/{path:path}", response_model=StateResponse)
+@app.get("/spaces/{space_id}/state/{path:path}", response_model=Message)
 async def get_state(
     space_id: str,
     path: str,
@@ -388,7 +381,7 @@ async def get_state(
 
     try:
         state = space.get_state(path, credentials.credentials)
-        return StateResponse(**state)
+        return Message(**state)
     except ValueError as e:
         error_msg = str(e)
         if "not found" in error_msg.lower():
@@ -403,50 +396,31 @@ async def get_state(
 async def put_state(
     space_id: str,
     path: str,
-    state_data: StateData,
+    msg: MessagePost,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Set state value in space"""
+    """Set state value by posting a message to the 'state' topic"""
+    if path != msg.type:
+        raise HTTPException(400, detail="Path mismatch")
+
     space = space_manager.get_space(space_id)
 
     try:
-        updated_at = space.set_state(
-            path,
-            state_data.data,
-            credentials.credentials,
-            state_data.signature,
-            state_data.signed_by,
-            state_data.signed_at
+        server_timestamp = await space.set_state(
+            path=path,
+            prev_hash=msg.prev_hash,
+            data=msg.data,
+            message_hash=msg.message_hash,
+            signature=msg.signature,
+            token=credentials.credentials
         )
-        return {"path": path, "updated_at": updated_at}
+        return {"message_hash": msg.message_hash, "server_timestamp": server_timestamp}
     except ValueError as e:
         error_msg = str(e)
         if "permission" in error_msg.lower():
             raise HTTPException(status_code=403, detail=error_msg)
         elif "required" in error_msg.lower() or "must be" in error_msg.lower() or "invalid" in error_msg.lower() or "signature" in error_msg.lower():
             raise HTTPException(status_code=400, detail=error_msg)
-        else:
-            raise HTTPException(status_code=401, detail=error_msg)
-
-
-@app.delete("/spaces/{space_id}/state/{path:path}")
-async def delete_state(
-    space_id: str,
-    path: str,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """Delete state value from space"""
-    space = space_manager.get_space(space_id)
-
-    try:
-        space.delete_state(path, credentials.credentials)
-        return Response(status_code=204)
-    except ValueError as e:
-        error_msg = str(e)
-        if "not found" in error_msg.lower():
-            raise HTTPException(status_code=404, detail=error_msg)
-        elif "permission" in error_msg.lower():
-            raise HTTPException(status_code=403, detail=error_msg)
         else:
             raise HTTPException(status_code=401, detail=error_msg)
 

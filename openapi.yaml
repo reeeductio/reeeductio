@@ -255,59 +255,6 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
-    delete:
-      tags: [Data]
-      summary: Delete data value
-      description: |
-        Remove data with cryptographic signature verification.
-        Deletion requests must be signed - the server verifies the signature before deleting.
-      parameters:
-        - $ref: '#/components/parameters/SpaceId'
-        - name: path
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [signature, signed_by, signed_at]
-              properties:
-                signature:
-                  type: string
-                  format: base64
-                  description: Ed25519 signature over (path + "DELETE" + signed_at) by signer (REQUIRED)
-                signed_by:
-                  type: string
-                  pattern: '^[A-Za-z0-9_-]{44}$'
-                  minLength: 44
-                  maxLength: 44
-                  description: Typed user/tool identifier of signer (REQUIRED)
-                signed_at:
-                  type: integer
-                  format: int64
-                  description: Unix timestamp in milliseconds when deletion was signed (REQUIRED)
-      responses:
-        '204':
-          description: Data deleted successfully
-        '400':
-          description: Invalid signature or missing required fields
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
   /spaces/{space_id}/state:
     get:
       tags: [State]

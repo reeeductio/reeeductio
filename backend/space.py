@@ -16,6 +16,7 @@ import json
 
 from data_store import DataStore
 from message_store import MessageStore
+from event_sourced_state_store import EventSourcedStateStore
 from crypto import CryptoUtils
 from blob_store import BlobStore
 from authorization import AuthorizationEngine
@@ -42,11 +43,12 @@ class Space:
     - Other frameworks
     """
 
+    #region init
     def __init__(
         self,
         space_id: str,
-        state_store: DataStore,
         message_store: MessageStore,
+        data_store: DataStore,
         blob_store: Optional[BlobStore] = None,
         jwt_secret: Optional[str] = None,
         jwt_algorithm: str = "HS256",
@@ -65,9 +67,10 @@ class Space:
             jwt_expiry_hours: JWT token expiry in hours
         """
         self.space_id = space_id
-        self.state_store = state_store
         self.message_store = message_store
+        self.data_store = data_store
         self.blob_store = blob_store
+        self.state_store = EventSourcedStateStore(message_store)
 
         # JWT configuration
         self.jwt_secret = jwt_secret
@@ -85,6 +88,7 @@ class Space:
         # In production, store in Redis with TTL
         self.challenges: Dict[str, Dict[str, Any]] = {}
 
+    #region Authentication
     # ========================================================================
     # Authentication Operations
     # ========================================================================
@@ -279,6 +283,7 @@ class Space:
         """
         return self.verify_jwt(token)
 
+    #region State
     # ========================================================================
     # State Operations
     # ========================================================================
@@ -304,93 +309,52 @@ class Space:
         except PathValidationError as e:
             raise ValueError(f"Invalid path: {e}")
 
-        # Authenticate
+        # Authenticate the member of the space
+        # (member might be a user or a tool)
         member = self.authenticate_request(token)
 
         # Check read permission
         if not self.check_permission(member["id"], "read", path):
             raise ValueError("No read permission")
 
-        # Get state
-        state = self.state_store.get_state(self.space_id, path)
+        # Get state - In the event-sourced state model,
+        # the current state for `path` is the most recent
+        # message in topic "state" with type `path`
+        state = self.message_store.get_most_recent_message(
+            space_id=self.space_id,
+            topic_id="state",
+            type=path
+        )
         if state is None:
             raise ValueError("State not found")
 
         return state
 
-    def set_state(
+    def _check_state_operation(
         self,
         path: str,
         data: str,
-        token: str,
-        signature: str,
-        signed_by: str,
-        signed_at: int
-    ) -> int:
+        signed_by: str
+    ) -> None:
         """
-        Set state value with authentication and authorization.
+        Validate state-specific constraints before allowing a state message to be posted.
 
-        All state writes must be cryptographically signed. The signature is verified
-        before the state is stored.
+        This includes chain-of-trust verification, capability grant validation,
+        role grant validation, and tool creation verification.
 
         Args:
-            path: State path to set
+            path: State path being modified
             data: Base64-encoded state data
-            token: JWT authentication token
-            signature: Ed25519 signature over (path + data + signed_at) - REQUIRED
-            signed_by: Typed user/tool identifier of signer - REQUIRED
-            signed_at: Unix timestamp in milliseconds when entry was signed - REQUIRED
-
-        Returns:
-            Timestamp when state was updated (milliseconds)
+            signed_by: Typed identifier of the signer (user or tool)
 
         Raises:
-            ValueError: If auth fails, permission denied, validation fails, or signature invalid
-            PathValidationError: If path contains invalid characters or wildcards
+            ValueError: If validation fails
         """
-        # VALIDATE PATH FIRST - before authentication or authorization
-        # This prevents wildcard injection attacks
+        # Validate path
         try:
             validate_user_path(path)
         except PathValidationError as e:
             raise ValueError(f"Invalid path: {e}")
-
-        # Authenticate
-        member = self.authenticate_request(token)
-        member_id = member["id"]
-
-        # Check tool use limit BEFORE processing (returns True if usage should be tracked)
-        should_track_usage = self._check_tool_limit(member_id)
-
-        # Check if state already exists
-        existing = self.state_store.get_state(self.space_id, path)
-        operation = "write" if existing else "create"
-
-        # Check permission
-        if not self.check_permission(member_id, operation, path):
-            raise ValueError(f"No {operation} permission for path: {path}")
-
-        # Validate signature on state entry (REQUIRED for all state writes)
-        if not signature or not signed_by:
-            raise ValueError("Signature and signed_by are required for all state writes")
-
-        if signed_at is None:
-            raise ValueError("signed_at is required for all state writes")
-
-        # Verify signature over (space_id | path | data | signed_at)
-        # Including space_id prevents signature replay attacks across different spaces
-        # Using | as field separator prevents confusion attacks
-        message_to_sign = '|'.join([
-            self.space_id,
-            path,
-            data,
-            str(signed_at)
-        ]).encode('utf-8')
-        signature_bytes = self.crypto.base64_decode(signature)
-        signer_public_key = extract_public_key(signed_by)
-
-        if not self.crypto.verify_signature(message_to_sign, signature_bytes, signer_public_key):
-            raise ValueError("Invalid state entry signature")
 
         # CRITICAL SECURITY: Verify chain of trust for the signer
         # This prevents database tampering attacks where an adversary inserts
@@ -458,248 +422,68 @@ class Space:
             if not self.authz.verify_chain_of_trust(self.space_id, signed_by):
                 raise ValueError(f"Creator {signed_by} has invalid chain of trust - cannot create new members")
 
-        # Prepare message for state-events topic
-        # Get chain head BEFORE authorization check (this is our "lock version")
-        import hashlib
-        # Include path, prev_hash, and timestamp to ensure uniqueness even with same data
-        head = self.message_store.get_chain_head(self.space_id, "state")
-        prev_hash = head["message_hash"] if head else None
-        prev_hash_str = prev_hash if prev_hash else ""
-        message_hash = hashlib.sha256(f"{path}|{data}|{prev_hash_str}|{signed_at}".encode('utf-8')).hexdigest()
-
-        # Write to BOTH stores (dual-write for event sourcing)
-        # Order matters: message store validates chain atomically
-
-        try:
-            # 1. Write to state-events topic with CAS on chain head
-            #    If this succeeds, we own the new chain head
-            self.message_store.add_message(
-                space_id=self.space_id,
-                topic_id="state",
-                message_hash=message_hash,
-                msg_type=path,  # State path IS the message type!
-                prev_hash=prev_hash,
-                data=data,  # State data goes directly to message data
-                sender=signed_by,
-                signature=signature,
-                server_timestamp=signed_at
-            )
-        except ChainConflictError as e:
-            # Another state change happened concurrently
-            # Client should get new chain head and retry
-            raise ValueError(f"State conflict: {e}. Please retry with current chain head.")
-
-        # 2. Write to state table (the materialized view / cache)
-        #    Safe to do now - message is committed
-        self.state_store.set_state(
-            self.space_id,
-            path,
-            data,
-            signature,
-            signed_by,
-            signed_at
-        )
-
-        # If creating a use-limited tool, initialize usage tracking
+        # Initialize tool usage tracking if creating a use-limited tool
+        # This should happen before the message is posted
         if path.startswith("auth/tools/") and path.count('/') == 2:
-            # This is a tool definition (not a capability under the tool)
             import base64
             import json
             try:
                 tool_def = json.loads(base64.b64decode(data))
                 if tool_def.get('use_limit') is not None:
-                    # Tool has use_limit, initialize tracking
                     tool_id = path.split('/')[-1]
-                    self.state_store.initialize_tool_usage(self.space_id, tool_id)
+                    self.message_store.initialize_tool_usage(self.space_id, tool_id)
             except Exception:
                 pass  # Invalid JSON, will be caught elsewhere
 
-        # Increment tool usage after successful write (only if tool has use_limit)
-        if should_track_usage:
-            self._increment_tool_usage(member_id)
-
-        return signed_at
-
-    def delete_state(self, path: str, token: str) -> None:
+    async def set_state(
+        self,
+        path: str,
+        prev_hash: Optional[str],
+        data: str,
+        message_hash: str,
+        signature: str,
+        token: str
+    ) -> int:
         """
-        Delete state value with authentication and authorization.
+        Set state value by posting a message to the "state" topic.
+
+        State is stored as messages with the state path in the "type" field.
+        This creates an immutable audit log of all state changes.
 
         Args:
-            path: State path to delete
+            path: State path to set (becomes the message "type")
+            prev_hash: Hash of previous message in state topic chain (None for first)
+            data: Base64-encoded state data
+            message_hash: SHA256 hash of the message (client-computed)
+            signature: Ed25519 signature over message_hash by sender
             token: JWT authentication token
 
+        Returns:
+            server_timestamp: Timestamp when state message was stored (milliseconds)
+
         Raises:
-            ValueError: If auth fails, permission denied, or state not found
+            ValueError: If auth fails, permission denied, validation fails, or chain conflict
             PathValidationError: If path contains invalid characters or wildcards
         """
-        # Validate path
-        try:
-            validate_user_path(path)
-        except PathValidationError as e:
-            raise ValueError(f"Invalid path: {e}")
-
-        # Authenticate
-        user = self.authenticate_request(token)
-        print("Got user = ", user)
-
-        # Check write permission for deletion
-        if not self.check_permission(user["id"], "write", path):
-            raise ValueError("No delete permission")
-
-        # Get current state for signature (need it for the deletion event)
-        existing = self.state_store.get_state(self.space_id, path)
-        if not existing:
-            raise ValueError("State not found")
-
-        # Prepare deletion event for state-events topic
-        import hashlib
-        import time as time_module
-        current_time = int(time_module.time() * 1000)
-        # Hash includes path and timestamp to ensure uniqueness
-        deletion_marker = f"delete:{path}:{current_time}"
-        message_hash = hashlib.sha256(deletion_marker.encode('utf-8')).hexdigest()
-        head = self.message_store.get_chain_head(self.space_id, "state")
-        prev_hash = head["message_hash"] if head else None
-
-        # Write to BOTH stores (dual-write for event sourcing)
-        # Order matters: message store validates chain atomically
-
-        try:
-            # 1. Write deletion event to state-events topic (CAS on chain head)
-            self.message_store.add_message(
-                space_id=self.space_id,
-                topic_id="state",
-                message_hash=message_hash,
-                msg_type=path,  # State path IS the message type
-                prev_hash=prev_hash,
-                data="",  # EMPTY DATA = DELETION!
-                sender=existing["signed_by"],
-                signature=existing["signature"],
-                server_timestamp=current_time
-            )
-        except ChainConflictError as e:
-            # Another state change happened concurrently
-            raise ValueError(f"State conflict: {e}. Please retry with current chain head.")
-
-        # 2. Delete from state table (the materialized view)
-        #    Safe to do now - deletion event is committed
-        if not self.state_store.delete_state(self.space_id, path):
-            raise ValueError("Failed to delete state")
+        # Simply delegate everything to post_message() with path as the message type
+        # The "state" topic handler in post_message will call _check_state_operation
+        # to do state-specific validation (capabilities, roles, chain of trust, etc.)
+        return await self.post_message(
+            topic_id="state",
+            message_hash=message_hash,
+            msg_type=path,  # State path IS the message type!
+            prev_hash=prev_hash,
+            data=data,
+            signature=signature,
+            token=token
+        )
 
     def list_state(self, prefix: str) -> List[Dict[str, Any]]:
         """List state entries matching prefix"""
         return self.state_store.list_state(self.space_id, prefix)
 
-    def _apply_state_event(self, message: Dict[str, Any]) -> None:
-        """
-        Apply a state event to the state store (internal use only).
 
-        This updates the state store cache based on a message from the
-        state-events topic. Does NOT perform authorization checks since
-        the message has already been validated and committed to the chain.
-
-        Used when:
-        - Receiving state-events messages via post_message()
-        - Replaying state from events during initialization
-
-        Args:
-            message: Message dict with keys: type (path), data, sender,
-                     signature, server_timestamp
-        """
-        path = message["type"]  # Path is stored in type field
-        data = message["data"]
-
-        if data:
-            # Set operation (non-empty data)
-            self.state_store.set_state(
-                space_id=self.space_id,
-                path=path,
-                data=data,
-                signature=message["signature"],
-                signed_by=message["sender"],
-                signed_at=message["server_timestamp"]
-            )
-        else:
-            # Delete operation (empty data)
-            self.state_store.delete_state(self.space_id, path)
-
-    def replay_state_from_events(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Rebuild state by replaying all events from the state-events topic.
-
-        Returns:
-            Dictionary mapping state paths to their state entries
-        """
-        # Get all state events (ordered chronologically)
-        events = self.message_store.get_messages(
-            space_id=self.space_id,
-            topic_id="state",
-            limit=100000  # Get all events
-        )
-
-        state = {}
-
-        for event in events:
-            path = event["type"]  # Path is stored in type field!
-
-            if event["data"]:
-                # Set operation (non-empty data)
-                state[path] = {
-                    "path": path,
-                    "data": event["data"],
-                    "signature": event["signature"],
-                    "signed_by": event["sender"],
-                    "signed_at": event["server_timestamp"]
-                }
-            else:
-                # Delete operation (empty data)
-                state.pop(path, None)
-
-        return state
-
-    def verify_state_consistency(self) -> Dict[str, Any]:
-        """
-        Compare state table with replayed state from events.
-
-        Returns:
-            Dictionary with consistency check results:
-            - consistent: bool - whether states match
-            - missing_in_table: list - paths in events but not in table
-            - missing_in_events: list - paths in table but not in events
-            - mismatched: list - paths where data differs
-        """
-        # Get state from table
-        table_state = {}
-        all_state = self.state_store.list_state(self.space_id, "")
-        for entry in all_state:
-            table_state[entry["path"]] = entry
-
-        # Replay state from events
-        event_state = self.replay_state_from_events()
-
-        # Compare
-        table_paths = set(table_state.keys())
-        event_paths = set(event_state.keys())
-
-        missing_in_table = list(event_paths - table_paths)
-        missing_in_events = list(table_paths - event_paths)
-
-        mismatched = []
-        for path in table_paths & event_paths:
-            if table_state[path]["data"] != event_state[path]["data"]:
-                mismatched.append({
-                    "path": path,
-                    "table_data": table_state[path]["data"],
-                    "event_data": event_state[path]["data"]
-                })
-
-        return {
-            "consistent": len(missing_in_table) == 0 and len(missing_in_events) == 0 and len(mismatched) == 0,
-            "missing_in_table": missing_in_table,
-            "missing_in_events": missing_in_events,
-            "mismatched": mismatched
-        }
-
+    #region Messages
     # ========================================================================
     # Message Operations
     # ========================================================================
@@ -760,6 +544,16 @@ class Space:
         if topic_id == "state":
             path = msg_type  # Path is stored in the type field for state events
 
+            # Validate path first - before authentication or authorization
+            # This prevents wildcard injection attacks
+            try:
+                validate_user_path(path)
+            except PathValidationError as e:
+                raise ValueError(f"Invalid path: {e}")
+
+            # Perform state-specific validation (chain of trust, capabilities, roles, tool creation)
+            self._check_state_operation(path, data, sender)
+
             # Determine operation type based on data and existing state
             if data:
                 # Set/create operation - check if state exists
@@ -772,6 +566,14 @@ class Space:
             # Check permission for this specific state path
             if not self.check_permission(sender, operation, path):
                 raise ValueError(f"No {operation} permission for state path: {path}")
+            
+            # Invalidate the cache for this path
+            # NOTE: This is safer than attempting to update the cache in place, and avoids potential
+            #       race conditions if we have multiple calls to this method running concurrently.
+            #       The state store will safely re-load its cache from the database the next time
+            #       this path entry is read.  The database is the source of ground truth, because
+            #       it uses transactions to prevent race conditions.
+            self.state_store.invalidate_cache(path)
 
         # Store message with atomic chain validation
         server_timestamp = int(time.time() * 1000)
@@ -794,17 +596,6 @@ class Space:
         # Increment tool usage after successful write (only if tool has use_limit)
         if should_track_usage:
             self._increment_tool_usage(sender)
-
-        # If this is a state event, update the state store cache
-        if topic_id == "state":
-            message_dict = {
-                "type": msg_type,  # Path is in type field
-                "data": data,
-                "sender": sender,
-                "signature": signature,
-                "server_timestamp": server_timestamp
-            }
-            self._apply_state_event(message_dict)
 
         # Broadcast to WebSocket subscribers
         message_dict = {
@@ -890,6 +681,121 @@ class Space:
 
         return message
 
+    #region KV Data
+    # ========================================================================
+    # KV Data Operations
+    # ========================================================================
+        
+    def get_data(self, path: str, token: str) -> Dict[str, Any]:
+        """
+        Get state value by path with authentication and authorization.
+
+        Args:
+            path: State path to retrieve
+            token: JWT authentication token
+
+        Returns:
+            KV data dictionary
+
+        Raises:
+            ValueError: If auth fails, permission denied, or state not found
+            PathValidationError: If path contains invalid characters or wildcards
+        """
+
+        # Authenticate
+        member = self.authenticate_request(token)
+
+        # Check read permission for the data path (before DB query for better security)
+        if not self.check_permission(member["id"], "read", f"data/{path}"):
+            raise ValueError("No read permission")
+
+        # Fetch the data
+        data = self.data_store.get_data(self.space_id, path)
+        if not data:
+            raise ValueError("Data not found")
+        # Return result
+        return data
+    
+    def set_data(
+            self,
+            path: str,
+            data: str,
+            signature: str,
+            signed_by: str,
+            signed_at: int,
+            token: str
+    ):
+        """
+        Set data value by path with authentication and authorization.
+
+        Args:
+            path: Data store path (KV key) to write
+            data: KV value to store (base64)
+            signature: Sender's signature
+            signed_by: ID of sender
+            signed_at: Signature timestamp
+            token: JWT authentication token
+
+        Returns:
+            Server timestamp
+
+        Raises:
+            ValueError: If auth fails or permission denied
+            PathValidationError: If path contains invalid characters or wildcards
+        """
+        # Authenticate
+        member = self.authenticate_request(token)
+        if signed_by != member["id"]:
+            raise ValueError("Signer does not match")
+
+        # Get current timestamp (before db operations)
+        server_timestamp = int(time.time() * 1000)
+
+        # Determine operation type based on data and existing contents
+        if data:
+            # Set/create operation - check if data exists
+            existing = self.data_store.get_data(self.space_id, path)
+            operation = "modify" if existing else "create"
+        else:
+            # Delete operation (empty data)
+            operation = "delete"
+
+        # Check permission for this specific data path
+        if not self.check_permission(member["id"], operation, path):
+            raise ValueError(f"No {operation} permission for state path: {path}")
+        
+        # Save the data in the store
+        self.data_store.set_data(self.space_id, path, data, signature, signed_by, signed_at)
+
+        return server_timestamp
+    
+    def delete_data(
+        self,
+        path: str,
+        token: str
+    ):
+        """
+        Delete data value by path with authentication and authorization.
+
+        Args:
+            path: Data store path (KV key) to write
+            token: JWT authentication token
+
+        Raises:
+            ValueError: If auth fails or permission denied
+            PathValidationError: If path contains invalid characters or wildcards
+        """
+        # Authenticate
+        member = self.authenticate_request(token)
+
+        # Check permission for this specific data path
+        if not self.check_permission(member["id"], "delete", path):
+            raise ValueError(f"No delete permission for state path: {path}")
+        
+        # Remove the data from the store
+        self.data_store.delete_data(self.space_id, path)
+
+    #region Authorization
     # ========================================================================
     # Authorization
     # ========================================================================
@@ -1004,7 +910,7 @@ class Space:
             return False
 
         # Get current usage
-        usage = self.state_store.get_tool_usage(self.space_id, tool_id)
+        usage = self.message_store.get_tool_usage(self.space_id, tool_id)
         current_count = usage['use_count'] if usage else 0
 
         # Check limit
@@ -1029,8 +935,9 @@ class Space:
             return
 
         now = int(time.time() * 1000)
-        self.state_store.increment_tool_usage(self.space_id, user_public_key, now)
+        self.message_store.increment_tool_usage(self.space_id, user_public_key, now)
 
+    #region Blobs
     # ========================================================================
     # Blob Management
     # ========================================================================
@@ -1263,6 +1170,7 @@ class Space:
         # Remove the reference (will delete blob content if no references remain)
         return self.blob_store.remove_blob_reference(blob_id, self.space_id, user_id)
 
+    #region WebSockets
     # ========================================================================
     # WebSocket Management
     # ========================================================================
@@ -1333,6 +1241,7 @@ class Space:
         """Get number of active WebSocket connections"""
         return len(self.websockets)
 
+    #region Utilities
     # ========================================================================
     # Validation & Crypto Utilities
     # ========================================================================
@@ -1375,6 +1284,7 @@ class Space:
         """Verify a generic signature"""
         return self.crypto.verify_signature(message, signature, public_key)
 
+    #region Stats
     # ========================================================================
     # Maintenance & Stats
     # ========================================================================

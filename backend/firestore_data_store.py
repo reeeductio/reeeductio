@@ -1,8 +1,11 @@
 """
 Firestore implementation of DataStore for E2EE messaging system
 
-Uses Google Cloud Firestore (in Datastore mode) for state persistence.
+Uses Google Cloud Firestore for legacy data persistence.
 Supports multi-instance deployments with automatic consistency.
+
+Note: This is the legacy data storage system. New state storage should use
+the event-sourced StateStore which stores state as messages in the message chain.
 """
 
 from typing import Optional, List, Dict, Any
@@ -12,11 +15,11 @@ from data_store import DataStore
 
 
 class FirestoreDataStore(DataStore):
-    """Firestore-based state storage implementation"""
+    """Firestore-based legacy data storage implementation"""
 
     def __init__(self, project_id: Optional[str] = None, database_id: str = "(default)"):
         """
-        Initialize Firestore state store
+        Initialize Firestore data store
 
         Args:
             project_id: GCP project ID (uses default credentials if None)
@@ -40,7 +43,7 @@ class FirestoreDataStore(DataStore):
         so we replace them with tildes.
 
         Args:
-            path: Original state path (e.g., "members/alice")
+            path: Original data path (e.g., "members/alice")
 
         Returns:
             Encoded path suitable for document ID (e.g., "members~alice")
@@ -60,15 +63,15 @@ class FirestoreDataStore(DataStore):
         """
         return encoded.replace('~', '/')
 
-    def get_state(
+    def get_data(
         self,
         space_id: str,
         path: str
     ) -> Optional[Dict[str, Any]]:
-        """Get state value by path from Firestore"""
+        """Get data value by path from Firestore"""
         doc_id = self._encode_path(path)
         doc_ref = self.db.collection('spaces').document(space_id) \
-                        .collection('state').document(doc_id)
+                        .collection('kv_data').document(doc_id)
 
         doc = doc_ref.get()
         if not doc.exists:
@@ -83,7 +86,7 @@ class FirestoreDataStore(DataStore):
             'signed_at': data['signed_at']
         }
 
-    def set_state(
+    def set_data(
         self,
         space_id: str,
         path: str,
@@ -92,10 +95,10 @@ class FirestoreDataStore(DataStore):
         signed_by: str,
         signed_at: int
     ) -> None:
-        """Set state value in Firestore (signature required)"""
+        """Set data value in Firestore (signature required)"""
         doc_id = self._encode_path(path)
         doc_ref = self.db.collection('spaces').document(space_id) \
-                        .collection('state').document(doc_id)
+                        .collection('kv_data').document(doc_id)
 
         doc_ref.set({
             'path': path,  # Keep original for querying
@@ -105,11 +108,11 @@ class FirestoreDataStore(DataStore):
             'signed_at': signed_at
         })
 
-    def delete_state(self, space_id: str, path: str) -> bool:
-        """Delete state value from Firestore"""
+    def delete_data(self, space_id: str, path: str) -> bool:
+        """Delete data value from Firestore"""
         doc_id = self._encode_path(path)
         doc_ref = self.db.collection('spaces').document(space_id) \
-                        .collection('state').document(doc_id)
+                        .collection('kv_data').document(doc_id)
 
         doc = doc_ref.get()
         if doc.exists:
@@ -117,29 +120,29 @@ class FirestoreDataStore(DataStore):
             return True
         return False
 
-    def list_state(
+    def list_data(
         self,
         space_id: str,
         prefix: str
     ) -> List[Dict[str, Any]]:
         """
-        List all state entries matching a prefix (ordered by path)
+        List all data entries matching a prefix (ordered by path)
 
         Uses Firestore range queries on the 'path' field to efficiently
         filter by prefix and maintain lexicographic ordering.
         """
-        state_ref = self.db.collection('spaces').document(space_id) \
-                          .collection('state')
+        data_ref = self.db.collection('spaces').document(space_id) \
+                          .collection('kv_data')
 
         if prefix:
             # Prefix query: path >= prefix AND path < prefix + '\uffff'
             # This works because Firestore uses lexicographic ordering
-            query = state_ref.where(filter=FieldFilter('path', '>=', prefix)) \
+            query = data_ref.where(filter=FieldFilter('path', '>=', prefix)) \
                             .where(filter=FieldFilter('path', '<', prefix + '\uffff')) \
                             .order_by('path')
         else:
             # No prefix: just order by path
-            query = state_ref.order_by('path')
+            query = data_ref.order_by('path')
 
         results = []
         for doc in query.stream():
@@ -153,80 +156,3 @@ class FirestoreDataStore(DataStore):
             })
 
         return results
-
-    def initialize_tool_usage(self, space_id: str, tool_id: str) -> None:
-        """Initialize tool usage tracking for a use-limited tool."""
-        doc_ref = self.db.collection('spaces').document(space_id) \
-                        .collection('tool_usage').document(tool_id)
-
-        doc_ref.set({
-            'use_count': 0,
-            'last_used_at': None
-        })
-
-    def increment_tool_usage(self, space_id: str, tool_id: str, timestamp: int) -> int:
-        """
-        Increment tool use count and return new count using Firestore transaction.
-
-        This is operational metadata (NOT part of space state).
-
-        Args:
-            space_id: Space ID
-            tool_id: Tool ID (T_*)
-            timestamp: Current timestamp in milliseconds
-
-        Returns:
-            New use count after increment
-        """
-        doc_ref = self.db.collection('spaces').document(space_id) \
-                        .collection('tool_usage').document(tool_id)
-
-        @firestore.transactional
-        def update_in_transaction(transaction, doc_ref):
-            snapshot = doc_ref.get(transaction=transaction)
-
-            if snapshot.exists:
-                # Increment existing count
-                current_count = snapshot.get('use_count')
-                new_count = current_count + 1
-                transaction.update(doc_ref, {
-                    'use_count': new_count,
-                    'last_used_at': timestamp
-                })
-                return new_count
-            else:
-                # Create new record
-                transaction.set(doc_ref, {
-                    'use_count': 1,
-                    'last_used_at': timestamp
-                })
-                return 1
-
-        transaction = self.db.transaction()
-        return update_in_transaction(transaction, doc_ref)
-
-    def get_tool_usage(self, space_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get tool usage statistics from Firestore.
-
-        This is operational metadata (NOT part of space state).
-
-        Args:
-            space_id: Space ID
-            tool_id: Tool ID (T_*)
-
-        Returns:
-            Dictionary with use_count and last_used_at, or None if not found
-        """
-        doc_ref = self.db.collection('spaces').document(space_id) \
-                        .collection('tool_usage').document(tool_id)
-
-        doc = doc_ref.get()
-        if not doc.exists:
-            return None
-
-        data = doc.to_dict()
-        return {
-            'use_count': data['use_count'],
-            'last_used_at': data.get('last_used_at')
-        }
