@@ -4,7 +4,7 @@ Firestore implementation of DataStore for E2EE messaging system
 Uses Google Cloud Firestore for legacy data persistence.
 Supports multi-instance deployments with automatic consistency.
 
-Note: This is the legacy data storage system. New state storage should use
+Note: This is the data storage system. New state storage should use
 the event-sourced StateStore which stores state as messages in the message chain.
 """
 

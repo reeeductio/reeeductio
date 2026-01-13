@@ -514,7 +514,7 @@ def _delete_collection(coll_ref, batch_size: int = 100):
 
 
 @pytest.fixture
-def firestore_state_store(firestore_emulator):
+def firestore_data_store(firestore_emulator):
     """
     Get FirestoreDataStore for testing.
 
