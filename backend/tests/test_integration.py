@@ -11,32 +11,34 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from identifiers import decode_identifier
+from crypto import CryptoUtils
 import conftest
-sign_state_entry = conftest.sign_state_entry
-sign_and_store_state = conftest.sign_and_store_state
+set_space_state = conftest.set_space_state
+authenticate_with_challenge = conftest.authenticate_with_challenge
 
-def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_keypair, user_keypair):
+def test_end_to_end_workflow(unique_space, unique_admin_keypair, user_keypair):
     """Test complete end-to-end workflow"""
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
     user_id = user_keypair['user_id']
     user_private = user_keypair['private']
 
+    # Admin authenticates
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
     # Admin adds user (should work)
-    assert authz.check_permission(space_id, admin_id, "create", f"members/{user_id}")
+    assert unique_space.authz.check_permission(space_id, admin_id, "create", f"members/{user_id}")
 
     user_member_data = {
         "user_id": user_id
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}",
         contents=user_member_data,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Grant user post capability
@@ -44,20 +46,19 @@ def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_ke
         "op": "create",
         "path": "topics/{any}/messages/"
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}/rights/post",
         contents=post_cap,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12346000
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # User posts message
-    assert authz.check_permission(space_id, user_id, "create", "topics/general-chat/messages/")
+    assert unique_space.authz.check_permission(space_id, user_id, "create", "topics/general-chat/messages/")
 
     # Compute message hash with sender
+    crypto = CryptoUtils()
     msg_hash = crypto.compute_message_hash(
         space_id, "general-chat", None, "encrypted_content", user_id
     )
@@ -66,7 +67,7 @@ def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_ke
     msg_id = decode_identifier(msg_hash)
     msg_signature = user_private.sign(msg_id.to_bytes())
 
-    message_store.add_message(
+    unique_space.message_store.add_message(
         space_id=space_id,
         topic_id="general-chat",
         message_hash=msg_hash,
@@ -79,10 +80,10 @@ def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_ke
     )
 
     # Verify user can't write to admin areas
-    assert not authz.check_permission(space_id, user_id, "write", "auth/users/someone_else/rights/")
+    assert not unique_space.authz.check_permission(space_id, user_id, "write", "auth/users/someone_else/rights/")
 
     # Retrieve and verify message
-    messages = message_store.get_messages(space_id, "general-chat")
+    messages = unique_space.message_store.get_messages(space_id, "general-chat")
     assert len(messages) == 1
     assert messages[0]["message_hash"] == msg_hash
     assert messages[0]["sender"] == user_id
