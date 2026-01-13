@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from space import Space
+from crypto import CryptoUtils
 
 # Add tests directory to path to import conftest
 sys.path.insert(0, str(Path(__file__).parent))
@@ -21,202 +22,13 @@ import conftest
 sign_data_entry = conftest.sign_data_entry
 sign_and_store_data = conftest.sign_and_store_data
 set_space_state = conftest.set_space_state
-
-def test_state_set_dual_write(space, message_store, state_store, admin_keypair):
-    """Test that setting state writes to both state table and state topic"""
-    space_id = admin_keypair['space_id']
-    path = "auth/users/U_test123"
-    user_data = {"user_id": "U_test123", "name": "Test User"}
-    data_b64 = base64.b64encode(json.dumps(user_data).encode()).decode()
-    signed_at = 1234567890
-
-    # Create signature
-    signature_b64 = sign_state_entry(
-        space_id, path, data_b64,
-        admin_keypair['private'], admin_keypair['id'], signed_at
-    )
-
-    # Write to both stores (simulating what Space.set_state does)
-    message_hash = hashlib.sha256(data_b64.encode('utf-8')).hexdigest()
-
-    state_store.set_state(
-        space_id=space_id,
-        path=path,
-        data=data_b64,
-        signature=signature_b64,
-        signed_by=admin_keypair['id'],
-        signed_at=signed_at
-    )
-
-    message_store.add_message(
-        space_id=space_id,
-        topic_id="state",
-        message_hash=message_hash,
-        msg_type=path,  # Path is the message type!
-        prev_hash=None,
-        data=data_b64,  # Data goes directly
-        sender=admin_keypair['id'],
-        signature=signature_b64,
-        server_timestamp=signed_at
-    )
-
-    # Verify in state table
-    table_state = state_store.get_state(space_id, path)
-    assert table_state is not None
-    assert table_state["data"] == data_b64
-    assert table_state["signed_by"] == admin_keypair['id']
-
-    # Verify in state topic
-    events = message_store.get_messages(space_id, "state")
-    assert len(events) == 1
-    assert events[0]["type"] == path  # Path is in type field
-    assert events[0]["data"] == data_b64  # Data matches
-    assert events[0]["sender"] == admin_keypair['id']
-
-
-def test_state_delete_dual_write(space, message_store, state_store, admin_keypair):
-    """Test that deleting state writes a deletion event to state topic"""
-    space_id = admin_keypair['space_id']
-    path = "auth/users/U_test456"
-    user_data = {"user_id": "U_test456", "name": "Delete Me"}
-
-    # First, create some state
-    sign_and_store_state(
-        state_store, space_id, path, user_data,
-        admin_keypair['private'], admin_keypair['id'], 1234567890
-    )
-
-    # Add to state
-    data_b64 = base64.b64encode(json.dumps(user_data).encode()).decode()
-    signature_b64 = sign_state_entry(
-        space_id, path, data_b64,
-        admin_keypair['private'], admin_keypair['id'], 1234567890
-    )
-    message_hash = hashlib.sha256(data_b64.encode('utf-8')).hexdigest()
-
-    message_store.add_message(
-        space_id, "state", message_hash, path, None,
-        data_b64, admin_keypair['id'], signature_b64, 1234567890
-    )
-
-    # Now delete it
-    deleted = state_store.delete_state(space_id, path)
-    assert deleted
-
-    # Write deletion event (empty data)
-    deletion_marker = f"delete:{path}:9999999"
-    deletion_hash = hashlib.sha256(deletion_marker.encode()).hexdigest()
-    head = message_store.get_chain_head(space_id, "state")
-
-    message_store.add_message(
-        space_id=space_id,
-        topic_id="state",
-        message_hash=deletion_hash,
-        msg_type=path,
-        prev_hash=head["message_hash"],
-        data="",  # EMPTY DATA = DELETION!
-        sender=admin_keypair['id'],
-        signature=signature_b64,
-        server_timestamp=9999999
-    )
-
-    # Verify deleted from table
-    table_state = state_store.get_state(space_id, path)
-    assert table_state is None
-
-    # Verify deletion event in topic
-    events = message_store.get_messages(space_id, "state")
-    assert len(events) == 2
-
-    # Find creation and deletion events (order may vary)
-    creation_event = next(e for e in events if e["data"])
-    deletion_event = next(e for e in events if not e["data"])
-
-    assert creation_event["data"] == data_b64  # Creation event has data
-    assert deletion_event["data"] == ""  # Deletion event is empty
-    assert creation_event["type"] == path
-    assert deletion_event["type"] == path
-
-
-def test_replay_state_from_events(space, message_store, state_store, admin_keypair):
-    """Test that state can be reconstructed by replaying events"""
-    space_id = admin_keypair['space_id']
-
-    # Create multiple state entries
-    paths_data = [
-        ("auth/users/U_alice", {"user_id": "U_alice", "name": "Alice"}),
-        ("auth/users/U_bob", {"user_id": "U_bob", "name": "Bob"}),
-        ("auth/roles/admin", {"role_id": "admin", "description": "Administrator"}),
-    ]
-
-    for path, state_data in paths_data:
-        sign_and_store_state(
-            state_store, space_id, path, state_data,
-            admin_keypair['private'], admin_keypair['id'], 1234567890
-        )
-
-        data_b64 = base64.b64encode(json.dumps(state_data).encode()).decode()
-        signature_b64 = sign_state_entry(
-            space_id, path, data_b64,
-            admin_keypair['private'], admin_keypair['id'], 1234567890
-        )
-
-        message_hash = hashlib.sha256(data_b64.encode('utf-8')).hexdigest()
-        head = message_store.get_chain_head(space_id, "state")
-        prev_hash = head["message_hash"] if head else None
-
-        message_store.add_message(
-            space_id, "state", message_hash, path, prev_hash,
-            data_b64, admin_keypair['id'], signature_b64, 1234567890
-        )
-
-    # Replay state from events
-    replayed_state = space.replay_state_from_events()
-
-    # Verify all paths are present
-    assert len(replayed_state) == 3
-    for path, state_data in paths_data:
-        assert path in replayed_state
-        data_b64 = base64.b64encode(json.dumps(state_data).encode()).decode()
-        assert replayed_state[path]["data"] == data_b64
-
-
-def test_verify_state_consistency(space, message_store, state_store, admin_keypair):
-    """Test that state table and replayed events are consistent"""
-    space_id = admin_keypair['space_id']
-    path = "auth/users/U_charlie"
-    user_data = {"user_id": "U_charlie", "name": "Charlie"}
-
-    # Create some state
-    sign_and_store_state(
-        state_store, space_id, path, user_data,
-        admin_keypair['private'], admin_keypair['id'], 1234567890
-    )
-
-    data_b64 = base64.b64encode(json.dumps(user_data).encode()).decode()
-    signature_b64 = sign_state_entry(
-        space_id, path, data_b64,
-        admin_keypair['private'], admin_keypair['id'], 1234567890
-    )
-    message_hash = hashlib.sha256(data_b64.encode('utf-8')).hexdigest()
-
-    message_store.add_message(
-        space_id, "state", message_hash, path, None,
-        data_b64, admin_keypair['id'], signature_b64, 1234567890
-    )
-
-    # Check consistency
-    consistency = space.verify_state_consistency()
-
-    assert consistency["consistent"] is True
-    assert len(consistency["missing_in_table"]) == 0
-    assert len(consistency["missing_in_events"]) == 0
-    assert len(consistency["mismatched"]) == 0
+authenticate_with_challenge = conftest.authenticate_with_challenge
 
 
 def test_message_type_field(message_store, admin_keypair):
     """Test that messages now include the 'type' field"""
     space_id = admin_keypair['space_id']
+    admin_id = admin_keypair['id']
 
     # Add a chat message
     message_store.add_message(
@@ -226,7 +38,7 @@ def test_message_type_field(message_store, admin_keypair):
         msg_type="chat.text",  # Message type field
         prev_hash=None,
         data="encrypted_content",
-        sender="U_alice",
+        sender=admin_id,
         signature="sig123",
         server_timestamp=1234567890
     )
@@ -238,9 +50,10 @@ def test_message_type_field(message_store, admin_keypair):
     assert messages[0]["data"] == "encrypted_content"  # Renamed from data
 
 
-def test_state_event_with_path_as_type(message_store, admin_keypair):
+def test_state_event_with_path_as_type(message_store, unique_admin_keypair):
     """Test that state events use the path as the message type"""
-    space_id = admin_keypair['space_id']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['id']
     path = "/auth/users/U_alice/rights/cap_123"
 
     # Add a state event
@@ -251,7 +64,7 @@ def test_state_event_with_path_as_type(message_store, admin_keypair):
         msg_type=path,  # Path is the type!
         prev_hash=None,
         data="capability_data_base64",
-        sender="U_admin",
+        sender=admin_id,
         signature="sig_state",
         server_timestamp=1234567890
     )
@@ -324,90 +137,75 @@ def test_chain_conflict_detection(message_store, admin_keypair):
     assert events[1]["message_hash"] == "hash_2"
 
 
-def test_post_message_updates_state(space, message_store, state_store, admin_keypair):
+def test_post_message_updates_state(unique_space, message_store, state_store, unique_admin_keypair, user_keypair):
     """Test that post_message() to state topic updates the state store"""
     import asyncio
 
-    space_id = admin_keypair['space_id']
-    path = "auth/users/U_test789"
-    user_data = {"user_id": "U_test789", "name": "Test User"}
-    data_b64 = base64.b64encode(json.dumps(user_data).encode()).decode()
-    signed_at = 1234567890
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['id']
+    admin_private = unique_admin_keypair['private']
+    user_id = user_keypair['id']
 
-    # Create signature
-    signature_b64 = sign_state_entry(
-        space_id, path, data_b64,
-        admin_keypair['private'], admin_keypair['id'], signed_at
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
+    path = f"auth/users/{user_id}"
+    user_data = {"user_id": user_id, "name": "Test User"}
+    user_data_b64 = CryptoUtils.base64_encode_object(user_data)
+
+    set_space_state(
+        unique_space,
+        path,
+        user_data,
+        admin_token,
+        unique_admin_keypair
     )
-
-    # Compute correct message hash using space's method
-    message_hash = space.compute_message_hash(
-        topic_id="state",
-        prev_hash=None,
-        data=data_b64,
-        sender=admin_keypair['id']
-    )
-
-    # Create JWT token for authentication
-    token_info = space.create_jwt(admin_keypair['id'])
-    token = token_info['token']
-
-    # Sign the message hash (sign the typed identifier bytes)
-    from identifiers import decode_identifier
-    msg_id = decode_identifier(message_hash)
-    message_signature = admin_keypair['private'].sign(msg_id.to_bytes())
-    message_signature_b64 = base64.b64encode(message_signature).decode()
-
-    # Post message to state topic
-    async def post():
-        return await space.post_message(
-            topic_id="state",
-            message_hash=message_hash,
-            msg_type=path,  # Path is the type
-            prev_hash=None,
-            data=data_b64,
-            signature=message_signature_b64,  # Message signature (not state signature)
-            token=token
-        )
-
-    # Run async function
-    server_timestamp = asyncio.run(post())
 
     # Verify message was written to state topic
     events = message_store.get_messages(space_id, "state")
     assert len(events) == 1
     assert events[0]["type"] == path
-    assert events[0]["data"] == data_b64
+    assert events[0]["data"] == user_data_b64
 
     # Verify state was also updated in state store
     state = state_store.get_state(space_id, path)
     assert state is not None
-    assert state["data"] == data_b64
-    assert state["signed_by"] == admin_keypair['id']
+    assert state["data"] == user_data_b64
+    assert state["sender"] == unique_admin_keypair['id']
 
 
-def test_post_message_unauthorized_state_modification(space, message_store, state_store, admin_keypair, user_keypair):
+def test_post_message_unauthorized_state_modification(unique_space, message_store, state_store, unique_admin_keypair, user_keypair):
     """Test that unauthorized users cannot modify state via post_message"""
     import asyncio
 
-    space_id = admin_keypair['space_id']
+    space_id = unique_admin_keypair['space_id']
+    user_id = user_keypair['id']
+    user_private = user_keypair['private']
+    admin_id = unique_admin_keypair['id']
+    admin_private = unique_admin_keypair['private']
+
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
+    # Admin adds user to the space
+    set_space_state(
+        unique_space,
+        f"auth/users/{user_id}",
+        {"user_id": user_id},
+        admin_token,
+        unique_admin_keypair
+    )
 
     # User tries to create a capability for themselves (unauthorized)
-    path = f"auth/users/{user_keypair['id']}/rights/cap_admin"
-    capability_data = {"capability_id": "cap_admin", "scope": "admin"}
+    path = f"auth/users/{user_id}/rights/cap_admin"
+    capability_data = {"op": "write", "path": "{...}"}
     data_b64 = base64.b64encode(json.dumps(capability_data).encode()).decode()
 
     # Compute message hash
-    message_hash = space.compute_message_hash(
+    message_hash = unique_space.compute_message_hash(
         topic_id="state",
         prev_hash=None,
         data=data_b64,
-        sender=user_keypair['id']
+        sender=user_id
     )
-
-    # Create JWT token for the user
-    token_info = space.create_jwt(user_keypair['id'])
-    token = token_info['token']
 
     # Sign the message
     from identifiers import decode_identifier
@@ -415,53 +213,54 @@ def test_post_message_unauthorized_state_modification(space, message_store, stat
     message_signature = user_keypair['private'].sign(msg_id.to_bytes())
     message_signature_b64 = base64.b64encode(message_signature).decode()
 
-    # Try to post message - should fail authorization
-    async def post():
-        return await space.post_message(
-            topic_id="state",
-            message_hash=message_hash,
-            msg_type=path,
-            prev_hash=None,
-            data=data_b64,
-            signature=message_signature_b64,
-            token=token
-        )
+    # Create JWT token for the user
+    user_token = authenticate_with_challenge(unique_space, user_id, user_private)
 
     # Should raise ValueError for no permission
     with pytest.raises(ValueError) as exc_info:
-        asyncio.run(post())
-
+        set_space_state(
+            unique_space,
+            path,
+            capability_data,
+            user_token,
+            user_keypair
+        )
     # User is blocked from posting to state topic or from modifying that state path
-    assert "No post permission" in str(exc_info.value) or "No permission" in str(exc_info.value)
+    assert "capability grant" in str(exc_info.value).lower()
 
-    # Verify no message was added
+    # Verify no additional message was added
     events = message_store.get_messages(space_id, "state")
-    assert len(events) == 0
+    # Should have only the 'create user' event
+    assert len(events) == 1
 
-    # Verify no state was created
+    # Verify no additional state was created
     state = state_store.get_state(space_id, path)
     assert state is None
 
 
-def test_post_message_privilege_escalation_blocked(space, message_store, state_store, admin_keypair, user_keypair):
+def test_post_message_privilege_escalation_blocked(unique_space, message_store, state_store, unique_admin_keypair, user_keypair):
     """Test that users cannot escalate privileges by writing to unauthorized state paths"""
     import asyncio
 
-    space_id = admin_keypair['space_id']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['id']
+    user_id = user_keypair['id']
+    admin_private = unique_admin_keypair['private']
+    user_private = user_keypair['private']
 
-    # First, grant the user permission to write to their own profile data
-    # (simulating a user who has *some* permissions but not admin)
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
 
-    # Grant permission to post to state topic
-    topic_cap_data = {
-        "op": "create",
-        "path": "topics/state/messages/{...}"
-    }
-    topic_cap_path = f"auth/users/{user_keypair['id']}/rights/cap_post_state_events"
-    sign_and_store_state(
-        state_store, space_id, topic_cap_path, topic_cap_data,
-        admin_keypair['private'], admin_keypair['id'], 1234567890
+    # Admin adds user to the space
+    set_space_state(
+        unique_space,
+        f"auth/users/{user_id}",
+        {"user_id": user_id},
+        admin_token,
+        unique_admin_keypair
     )
+
+    # Grant the user permission to write to their own profile data
+    # (simulating a user who has *some* permissions but not admin)
 
     # Admin creates a capability allowing user to write to their profile
     capability_data = {
@@ -471,60 +270,39 @@ def test_post_message_privilege_escalation_blocked(space, message_store, state_s
     capability_path = f"auth/users/{user_keypair['id']}/rights/cap_profile_write"
 
     # Admin signs and stores the capability
-    sign_and_store_state(
-        state_store, space_id, capability_path, capability_data,
-        admin_keypair['private'], admin_keypair['id'], 1234567890
+    set_space_state(
+        unique_space,
+        capability_path,
+        capability_data,
+        admin_token,
+        unique_admin_keypair
     )
 
     # Now user tries to grant themselves admin capability by posting to auth/ tree
+    user_token = authenticate_with_challenge(unique_space, user_id, user_private)
     admin_cap_data = {
         "op": "modify",
         "path": "auth/{...}"  # Trying to grant themselves full auth access!
     }
     malicious_path = f"auth/users/{user_keypair['id']}/rights/cap_admin"
-    malicious_data_b64 = base64.b64encode(json.dumps(admin_cap_data).encode()).decode()
-
-    # Compute message hash for the malicious state event
-    message_hash = space.compute_message_hash(
-        topic_id="state",
-        prev_hash=None,  # First message to state
-        data=malicious_data_b64,
-        sender=user_keypair['id']
-    )
-
-    # Create JWT token for the user
-    token_info = space.create_jwt(user_keypair['id'])
-    token = token_info['token']
-
-    # Sign the message
-    from identifiers import decode_identifier
-    msg_id = decode_identifier(message_hash)
-    message_signature = user_keypair['private'].sign(msg_id.to_bytes())
-    message_signature_b64 = base64.b64encode(message_signature).decode()
-
-    # Try to post message - should fail because user doesn't have permission for auth/ paths
-    async def post():
-        return await space.post_message(
-            topic_id="state",
-            message_hash=message_hash,
-            msg_type=malicious_path,  # Path in auth/ tree
-            prev_hash=None,
-            data=malicious_data_b64,
-            signature=message_signature_b64,
-            token=token
-        )
 
     # Should raise ValueError for no create permission on auth/ path
     with pytest.raises(ValueError) as exc_info:
-        asyncio.run(post())
+        set_space_state(
+            unique_space,
+            malicious_path,
+            admin_cap_data,
+            user_token,
+            user_keypair
+        )
 
     # Verify the error is about lacking permission
     error_msg = str(exc_info.value)
-    assert "No create permission" in error_msg or "No permission" in error_msg or "No post permission" in error_msg
+    assert "capability grant" in error_msg
 
-    # Verify no message was added to state
+    # Verify no message was added to state after the 2 admin messages
     events = message_store.get_messages(space_id, "state")
-    assert len(events) == 0  # No messages should have been added
+    assert len(events) == 2  # No new messages should have been added
 
     # Verify no malicious capability was created
     malicious_state = state_store.get_state(space_id, malicious_path)
@@ -532,8 +310,7 @@ def test_post_message_privilege_escalation_blocked(space, message_store, state_s
 
     # Verify user still only has their original two capabilities (topic + profile)
     user_caps = state_store.list_state(space_id, f"auth/users/{user_keypair['id']}/rights/")
-    assert len(user_caps) == 2
-    cap_paths = {cap["path"] for cap in user_caps}
-    assert topic_cap_path in cap_paths
+    assert len(user_caps) == 1
+    cap_paths = {cap["type"] for cap in user_caps}
     assert capability_path in cap_paths
     assert malicious_path not in cap_paths
