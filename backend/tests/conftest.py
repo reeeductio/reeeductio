@@ -25,6 +25,7 @@ from identifiers import encode_space_id, encode_user_id
 from filesystem_blob_store import FilesystemBlobStore
 from sqlite_blob_store import SqliteBlobStore
 from space import Space
+from typing import Any, Dict
 
 
 # ============================================================================
@@ -355,6 +356,42 @@ def authenticate_with_challenge(space, user_id, private_key):
 
     token_response = space.create_jwt(user_id)
     return token_response['token']
+
+def delete_space_state(space: Space, path: str, token: str, keypair: Dict[str,Any]):
+    
+    # Get current chain head for prev_hash
+    head = space.message_store.get_chain_head(space.space_id, "state")
+    prev_hash = head["message_hash"] if head else None
+
+    # Compute message hash
+    from crypto import CryptoUtils
+    crypto = CryptoUtils()
+    message_hash = crypto.compute_message_hash(
+        space.space_id,
+        "state",
+        prev_hash,
+        "",
+        keypair['id']
+    )
+
+    # Sign the message hash
+    # Decode the typed identifier and convert to bytes for signing
+    from identifiers import decode_identifier
+    message_tid = decode_identifier(message_hash)
+    message_bytes = message_tid.to_bytes()
+    signature_bytes = keypair['private'].sign(message_bytes)
+    signature = crypto.base64_encode(signature_bytes)
+
+    import asyncio
+    return asyncio.run(space.post_message(
+        "state",
+        message_hash,
+        path,
+        prev_hash,
+        "",
+        signature,
+        token
+    ))
 
 
 #region Firestore

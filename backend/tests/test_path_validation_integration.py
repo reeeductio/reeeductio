@@ -19,22 +19,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import conftest
-sign_state_entry = conftest.sign_state_entry
-sign_and_store_state = conftest.sign_and_store_state
+sign_data_entry = conftest.sign_data_entry
+sign_and_store_data = conftest.sign_and_store_data
 set_space_state = conftest.set_space_state
-
+delete_space_state = conftest.delete_space_state
+authenticate_with_challenge = conftest.authenticate_with_challenge
 
 
 @pytest.fixture
-def space(temp_db_path, admin_keypair):
+def space(admin_keypair, data_store, message_store):
     """Create a test space"""
-    state_store = SqliteDataStore(temp_db_path)
-    message_store = SqliteMessageStore(temp_db_path)
 
     space_id = admin_keypair['space_id']
     space = Space(
         space_id=space_id,
-        state_store=state_store,
+        data_store=data_store,
         message_store=message_store,
         blob_store=None,
         jwt_secret="test_secret_key_for_testing"
@@ -164,11 +163,11 @@ class TestStatePathValidation:
         set_space_state(space, valid_path, data, admin_token, admin_keypair)
 
         # Valid deletion works
-        space.delete_state(valid_path, admin_token)
+        delete_space_state(space, valid_path, admin_token, admin_keypair)
 
         # Invalid path rejected
         with pytest.raises(ValueError) as exc_info:
-            space.delete_state("test/{any}", admin_token)
+            delete_space_state(space, "test/{any}", admin_token, admin_keypair)
         assert "invalid" in str(exc_info.value).lower()
 
 
