@@ -15,31 +15,33 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import conftest
-sign_state_entry = conftest.sign_state_entry
-sign_and_store_state = conftest.sign_and_store_state
+sign_data_entry = conftest.sign_data_entry
+sign_and_store_data = conftest.sign_and_store_data
+set_space_state = conftest.set_space_state
+authenticate_with_challenge = conftest.authenticate_with_challenge
 
 
 @pytest.fixture
-def space_with_roles(temp_db_path, state_store, crypto, admin_keypair):
+def space_with_roles(unique_space, unique_admin_keypair):
     """Set up a space with role definitions"""
 
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
+
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
 
     # Create "user" role
     user_role = {
         "role_id": "user",
         "description": "Standard user role"
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path="auth/roles/user",
         contents=user_role,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Add capabilities to "user" role
@@ -47,27 +49,23 @@ def space_with_roles(temp_db_path, state_store, crypto, admin_keypair):
         "op": "read",
         "path": "{...}"  # Can read anything at any depth
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path="auth/roles/user/rights/cap_read",
         contents=user_read_cap,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
     user_post_cap = {
         "op": "create",
         "path": "topics/{any}/messages/{...}"  # Can create messages at any depth under topics
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path="auth/roles/user/rights/cap_post",
         contents=user_post_cap,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Create "moderator" role
@@ -75,14 +73,12 @@ def space_with_roles(temp_db_path, state_store, crypto, admin_keypair):
         "role_id": "moderator",
         "description": "Moderator role"
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path="auth/roles/moderator",
         contents=mod_role,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Moderators can ban users
@@ -90,42 +86,39 @@ def space_with_roles(temp_db_path, state_store, crypto, admin_keypair):
         "op": "write",
         "path": "auth/users/{other}/banned"
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path="auth/roles/moderator/rights/cap_ban",
         contents=mod_ban_cap,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     return {
-        'state_store': state_store,
+        'space': unique_space,
         'space_id': space_id,
-        'admin_id': admin_id
+        'admin_id': admin_id,
+        'admin_token': admin_token,
+        'admin_keypair': unique_admin_keypair
     }
 
 
-def test_load_role_capabilities(authz, space_with_roles, user_keypair, admin_keypair):
+def test_load_role_capabilities(space_with_roles, user_keypair):
     """Test loading capabilities from user's roles"""
     space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = space_with_roles['state_store']
-
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space = space_with_roles['space']
+    admin_token = space_with_roles['admin_token']
+    admin_keypair = space_with_roles['admin_keypair']
 
     # First, add the user to the space (required for chain of trust)
     user_info = {"user_id": user_id}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=space,
         path=f"auth/users/{user_id}",
         contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=admin_keypair
     )
 
     # Grant "user" role to the user
@@ -133,18 +126,16 @@ def test_load_role_capabilities(authz, space_with_roles, user_keypair, admin_key
         "user_id": user_id,
         "role_id": "user"
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=space,
         path=f"auth/users/{user_id}/roles/user",
         contents=role_grant,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=admin_keypair
     )
 
     # Load role capabilities
-    role_caps = authz._load_role_capabilities(space_id, user_id)
+    role_caps = space.authz._load_role_capabilities(space_id, user_id)
 
     # Should have 2 capabilities from "user" role
     assert len(role_caps) == 2
@@ -155,72 +146,64 @@ def test_load_role_capabilities(authz, space_with_roles, user_keypair, admin_key
     assert 'create' in ops
 
 
-def test_permission_check_with_roles(authz, space_with_roles, user_keypair, admin_keypair):
+def test_permission_check_with_roles(space_with_roles, user_keypair):
     """Test that permission checks include role capabilities"""
     space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = space_with_roles['state_store']
-
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space = space_with_roles['space']
+    admin_token = space_with_roles['admin_token']
+    admin_keypair = space_with_roles['admin_keypair']
 
     # Add user as member of the space
     user_info = {
         "user_id": user_id
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=space,
         path=f"auth/users/{user_id}",
         contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=admin_keypair
     )
 
     # User has no direct capabilities yet
-    assert not authz.check_permission(space_id, user_id, "read", "anything")
+    assert not space.authz.check_permission(space_id, user_id, "read", "anything")
 
     # Grant "user" role
     role_grant = {
         "user_id": user_id,
         "role_id": "user"
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=space,
         path=f"auth/users/{user_id}/roles/user",
         contents=role_grant,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=admin_keypair
     )
 
     # Now user should have permissions from role
-    assert authz.check_permission(space_id, user_id, "read", "anything")
-    assert authz.check_permission(space_id, user_id, "create", "topics/general/messages/msg1")
-    assert not authz.check_permission(space_id, user_id, "write", "topics/general/messages/msg1")
+    assert space.authz.check_permission(space_id, user_id, "read", "anything")
+    assert space.authz.check_permission(space_id, user_id, "create", "topics/general/messages/msg1")
+    assert not space.authz.check_permission(space_id, user_id, "write", "topics/general/messages/msg1")
 
 
-def test_multiple_roles(authz, space_with_roles, user_keypair, admin_keypair):
+def test_multiple_roles(space_with_roles, user_keypair):
     """Test user with multiple roles gets all capabilities"""
     space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = space_with_roles['state_store']
-
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space = space_with_roles['space']
+    admin_token = space_with_roles['admin_token']
+    admin_keypair = space_with_roles['admin_keypair']
 
     # First, add the user to the space (required for chain of trust)
     user_info = {"user_id": user_id}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=space,
         path=f"auth/users/{user_id}",
         contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=admin_keypair
     )
 
     # Grant both "user" and "moderator" roles
@@ -228,47 +211,42 @@ def test_multiple_roles(authz, space_with_roles, user_keypair, admin_keypair):
         "user_id": user_id,
         "role_id": "user"
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=space,
         path=f"auth/users/{user_id}/roles/user",
         contents=user_role_grant,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=admin_keypair
     )
 
     mod_role_grant = {
         "user_id": user_id,
         "role_id": "moderator"
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=space,
         path=f"auth/users/{user_id}/roles/moderator",
         contents=mod_role_grant,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=admin_keypair
     )
 
     # User should have capabilities from both roles
-    role_caps = authz._load_role_capabilities(space_id, user_id)
+    role_caps = space.authz._load_role_capabilities(space_id, user_id)
     assert len(role_caps) == 3  # 2 from user + 1 from moderator
 
     # Check permissions from both roles
-    assert authz.check_permission(space_id, user_id, "read", "anything")  # from user role
-    assert authz.check_permission(space_id, user_id, "write", "auth/users/U_other/banned")  # from moderator role
+    assert space.authz.check_permission(space_id, user_id, "read", "anything")  # from user role
+    assert space.authz.check_permission(space_id, user_id, "write", "auth/users/U_other/banned")  # from moderator role
 
 
-def test_expired_role_grant_ignored(authz, space_with_roles, user_keypair, admin_keypair):
+def test_expired_role_grant_ignored(space_with_roles, user_keypair):
     """Test that expired role grants are not loaded"""
     space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = space_with_roles['state_store']
-
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space = space_with_roles['space']
+    admin_token = space_with_roles['admin_token']
+    admin_keypair = space_with_roles['admin_keypair']
 
     import time
     past_time = int((time.time() - 3600) * 1000)  # 1 hour ago
@@ -279,28 +257,27 @@ def test_expired_role_grant_ignored(authz, space_with_roles, user_keypair, admin
         "role_id": "user",
         "expires_at": past_time
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=space,
         path=f"auth/users/{user_id}/roles/user",
         contents=role_grant,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=admin_keypair
     )
 
     # Should not load capabilities from expired role
-    role_caps = authz._load_role_capabilities(space_id, user_id)
+    role_caps = space.authz._load_role_capabilities(space_id, user_id)
     assert len(role_caps) == 0
 
     # Should not have permissions
-    assert not authz.check_permission(space_id, user_id, "read", "anything")
+    assert not space.authz.check_permission(space_id, user_id, "read", "anything")
 
 
-def test_verify_role_grant_subset_checking(authz, space_with_roles, user_keypair):
+def test_verify_role_grant_subset_checking(space_with_roles, user_keypair):
     """Test that role grant validation checks granter has superset"""
     space_id = space_with_roles['space_id']
     admin_id = space_with_roles['admin_id']
+    space = space_with_roles['space']
     user_id = user_keypair['user_id']
 
     # Admin (space creator) can grant any role
@@ -310,7 +287,7 @@ def test_verify_role_grant_subset_checking(authz, space_with_roles, user_keypair
     }
     path = f"auth/users/{user_id}/roles/user"
 
-    assert authz.verify_role_grant(
+    assert space.authz.verify_role_grant(
         space_id,
         path,
         role_grant_data,
@@ -318,28 +295,25 @@ def test_verify_role_grant_subset_checking(authz, space_with_roles, user_keypair
     )
 
 
-def test_verify_role_grant_privilege_escalation_prevented(authz, space_with_roles, user_keypair, admin_keypair):
+def test_verify_role_grant_privilege_escalation_prevented(space_with_roles, user_keypair):
     """Test that users cannot grant roles they don't have capabilities for"""
     space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = space_with_roles['state_store']
-
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space = space_with_roles['space']
+    admin_token = space_with_roles['admin_token']
+    admin_keypair = space_with_roles['admin_keypair']
 
     # Give user1 only read permission
     user1_cap = {
         "op": "read",
         "path": "{any}"
     }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=space,
         path=f"auth/users/{user_id}/rights/cap_001",
         contents=user1_cap,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=1234567890
+        token=admin_token,
+        keypair=admin_keypair
     )
 
     # Create another user
@@ -363,7 +337,7 @@ def test_verify_role_grant_privilege_escalation_prevented(authz, space_with_role
     path = f"auth/users/{user2_id}/roles/moderator"
 
     # Should fail - user1 doesn't have capabilities that moderator role provides
-    assert not authz.verify_role_grant(
+    assert not space.authz.verify_role_grant(
         space_id,
         path,
         role_grant_data,
