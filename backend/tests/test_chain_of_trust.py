@@ -85,7 +85,7 @@ def test_user_created_by_user_valid(unique_space, unique_admin_keypair, user_key
         path=f"auth/users/{user_id}/rights/create_users",
         contents={
             "op": "create",
-            "path": "auth/users/{...}"
+            "path": "state/auth/users/{...}"
         },
         token=admin_token,
         keypair=unique_admin_keypair

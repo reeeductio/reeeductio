@@ -79,7 +79,12 @@ class Space:
 
         # Initialize crypto and authorization
         self.crypto = CryptoUtils()
-        self.authz = AuthorizationEngine(self.state_store, self.crypto)
+        self.authz = AuthorizationEngine(
+            self.state_store,
+            self.crypto,
+            blob_store=self.blob_store,
+            data_store=self.data_store
+        )
 
         # WebSocket connections for this space
         self.websockets: Set[WebSocket] = set()
@@ -350,6 +355,8 @@ class Space:
         Raises:
             ValueError: If validation fails
         """
+        print("Checking state operation")
+
         # Validate path
         try:
             validate_user_path(path)
@@ -372,6 +379,7 @@ class Space:
 
         # For capability paths, validate capability structure
         if self.is_capability_path(path):
+            print("State operation is capability path")
             # Decode and validate capability
             import base64
             import json
@@ -386,6 +394,8 @@ class Space:
             if not self.verify_capability_grant(path, capability_dict, signed_by):
                 print("Capability grant verification failed")
                 raise ValueError("Invalid capability grant or privilege escalation")
+        else:
+            print("State operation is not capability grant")
 
         # For role grant paths, validate role grant structure
         if self.authz.is_role_grant_path(path):
@@ -413,6 +423,8 @@ class Space:
             # Verify the role grant (subset checking)
             if not self.authz.verify_role_grant(self.space_id, path, role_grant_dict, signed_by):
                 raise ValueError("Invalid role grant or privilege escalation")
+        else:
+            print("State operation is not role grant")
 
         # For user/tool creation, verify the creator has valid chain of trust
         # The new user/tool won't have a chain yet (we're creating it), but the
@@ -565,7 +577,8 @@ class Space:
                 operation = "delete"
 
             # Check permission for this specific state path
-            if not self.check_permission(sender, operation, path):
+            # Use unified namespace: prefix with "state/"
+            if not self.check_permission(sender, operation, f"state/{path}"):
                 raise ValueError(f"No {operation} permission for state path: {path}")
             
             # Invalidate the cache for this path

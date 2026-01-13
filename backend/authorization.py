@@ -29,7 +29,9 @@ from typing import Optional, List, Dict, Any
 from state_store import StateStore
 from crypto import CryptoUtils
 from identifiers import extract_public_key, decode_identifier, IdType
-from path_validation import validate_capability_path, PathValidationError
+from path_validation import validate_capability_path, PathValidationError, parse_resource_path
+from blob_store import BlobStore
+from data_store import DataStore
 import fnmatch
 import base64
 import json
@@ -39,9 +41,17 @@ import time
 class AuthorizationEngine:
     """Capability-based authorization with signed permissions"""
 
-    def __init__(self, state_store: StateStore, crypto: CryptoUtils):
+    def __init__(
+        self,
+        state_store: StateStore,
+        crypto: CryptoUtils,
+        blob_store: Optional[BlobStore] = None,
+        data_store: Optional[DataStore] = None
+    ):
         self.state_store = state_store
         self.crypto = crypto
+        self.blob_store = blob_store
+        self.data_store = data_store
         # Cache for validated public key chains: (space_id, member_id) -> bool
         # This avoids re-walking the chain on every operation
         self._chain_validation_cache: Dict[tuple, bool] = {}
@@ -114,25 +124,31 @@ class AuthorizationEngine:
         space_id: str,
         member_id: str,
         operation: str,
-        state_path: str
+        resource_path: str
     ) -> bool:
         """
-        Check if user or tool has permission for an operation on a state path
+        Check if user or tool has permission for an operation on a resource path.
 
-        Supports ownership-restricted capabilities with lazy state entry loading.
-        State entry is only loaded when a matching capability has must_be_owner=true.
+        Unified namespace support:
+        - state/{path}      - State paths (auth/users/..., profiles/..., etc.)
+        - data/{path}       - Data storage paths (key-value store)
+        - topics/{topic}    - Message topic access
+        - blobs/{blob_id}   - Blob storage access
+
+        Supports ownership-restricted capabilities with lazy resource loading.
+        Resource is only loaded when a matching capability has must_be_owner=true.
 
         Args:
             space_id: Space identifier
             member_id: User or tool typed identifier
             operation: 'read', 'create', 'modify', 'delete', or 'write'
-            state_path: State path being accessed
+            resource_path: Prefixed resource path (e.g., "state/auth/users/U_xxx")
 
         Returns:
             True if user/tool has permission
         """
 
-        print(f"Checking permisson for {operation} on path {state_path}")
+        print(f"Checking permission for {operation} on path {resource_path}")
 
         # Tools have NO ambient authority - they can only use explicit capabilities
         if self._is_tool(member_id):
@@ -142,7 +158,7 @@ class AuthorizationEngine:
             # Check if any capability grants permission (with ownership check)
             for cap in capabilities:
                 if self._check_capability_with_ownership(
-                    cap, operation, state_path, member_id, space_id
+                    cap, operation, resource_path, member_id, space_id
                 ):
                     return True
 
@@ -174,7 +190,7 @@ class AuthorizationEngine:
         # Check if any capability grants permission (with ownership check)
         for cap in all_capabilities:
             if self._check_capability_with_ownership(
-                cap, operation, state_path, member_id, space_id
+                cap, operation, resource_path, member_id, space_id
             ):
                 return True
 
@@ -184,7 +200,7 @@ class AuthorizationEngine:
         self,
         capability: dict,
         operation: str,
-        state_path: str,
+        resource_path: str,
         member_id: str,
         space_id: str
     ) -> bool:
@@ -193,22 +209,22 @@ class AuthorizationEngine:
 
         This method:
         1. First checks path and operation (cheap)
-        2. Only if those match AND must_be_owner=true, loads state entry (expensive)
-        3. Verifies ownership by comparing signed_by field
+        2. Only if those match AND must_be_owner=true, loads resource (expensive)
+        3. Verifies ownership based on resource type
 
         Args:
             capability: Capability dict with 'op', 'path', and optional 'must_be_owner'
             operation: Operation being performed
-            state_path: State path being accessed
+            resource_path: Prefixed resource path being accessed
             member_id: User or tool identifier
-            space_id: Space identifier (for state lookup)
+            space_id: Space identifier (for lookups)
 
         Returns:
             True if capability grants permission
         """
         # First check path and operation (cheap)
-        if not self._capability_grants_permission(capability, operation, state_path, member_id):
-            print(f"Capability {capability['op']}: {capability['path']} does not grant {operation} on {state_path}")
+        if not self._capability_grants_permission(capability, operation, resource_path, member_id):
+            print(f"Capability {capability['op']}: {capability['path']} does not grant {operation} on {resource_path}")
             return False
 
         # Path and operation match! Now check ownership if needed
@@ -216,7 +232,7 @@ class AuthorizationEngine:
 
         if not must_be_owner:
             # Non-ownership-restricted capability grants access immediately
-            print(f"Non-restricted capability grants {operation} to {state_path}")
+            print(f"Non-restricted capability grants {operation} to {resource_path}")
             return True
 
         # Ownership-restricted capability - need to verify ownership
@@ -226,18 +242,108 @@ class AuthorizationEngine:
             print(f"create does not require ownership")
             return True
 
-        # For other operations, verify ownership via state entry lookup
+        # For other operations, verify ownership based on resource type
         # This is the lazy loading - only happens when needed
+        try:
+            resource_type, subpath = parse_resource_path(resource_path)
+        except PathValidationError:
+            print(f"Invalid resource path: {resource_path}")
+            return False
+
+        # Verify ownership based on resource type
+        if resource_type == "state":
+            return self._verify_state_ownership(space_id, subpath, member_id)
+        elif resource_type == "data":
+            return self._verify_data_ownership(space_id, subpath, member_id)
+        elif resource_type == "topics":
+            # Topics don't support ownership verification (they're immutable)
+            # must_be_owner doesn't make sense for topics
+            print(f"Topics don't support ownership verification")
+            return False
+        elif resource_type == "blobs":
+            return self._verify_blob_ownership(space_id, subpath, member_id)
+        else:
+            print(f"Unknown resource type: {resource_type}")
+            return False
+
+    def _verify_state_ownership(self, space_id: str, state_path: str, member_id: str) -> bool:
+        """
+        Verify that member owns a state entry.
+
+        Args:
+            space_id: Space identifier
+            state_path: State path (without "state/" prefix)
+            member_id: User or tool identifier
+
+        Returns:
+            True if member owns the state entry
+        """
         state_entry = self.state_store.get_state(space_id, state_path)
 
         if not state_entry:
             # No entry exists, so you can't own it
-            print(f"State entry doesn't exist, non-create capability cannot grant access")
+            print(f"State entry doesn't exist at {state_path}")
             return False
 
-        # Check if member owns this entry
+        # Check if member owns this entry (sender field)
         return state_entry.get("sender") == member_id
-    
+
+    def _verify_data_ownership(self, space_id: str, data_path: str, member_id: str) -> bool:
+        """
+        Verify that member owns a data entry.
+
+        Args:
+            space_id: Space identifier
+            data_path: Data path (without "data/" prefix)
+            member_id: User or tool identifier
+
+        Returns:
+            True if member owns the data entry
+        """
+        if not self.data_store:
+            print(f"Data store not available")
+            return False
+
+        data_entry = self.data_store.get_data(space_id, data_path)
+
+        if not data_entry:
+            # No entry exists, so you can't own it
+            print(f"Data entry doesn't exist at {data_path}")
+            return False
+
+        # Check if member owns this entry (signed_by field)
+        return data_entry.get("signed_by") == member_id
+
+    def _verify_blob_ownership(self, space_id: str, blob_id: str, member_id: str) -> bool:
+        """
+        Verify that member owns (has a reference to) a blob.
+
+        Blobs can have multiple owners. This checks if the member has uploaded
+        a reference to this blob in this space.
+
+        Args:
+            space_id: Space identifier
+            blob_id: Blob identifier (without "blobs/" prefix)
+            member_id: User or tool identifier
+
+        Returns:
+            True if member has a reference to the blob in this space
+        """
+        if not self.blob_store:
+            print(f"Blob store not available")
+            return False
+
+        blob_metadata = self.blob_store.get_blob_metadata(blob_id)
+
+        if not blob_metadata:
+            # Blob doesn't exist, so you can't own it
+            print(f"Blob doesn't exist: {blob_id}")
+            return False
+
+        # Check if member has a reference to this blob in this space
+        reference = blob_metadata.get_reference(space_id, member_id)
+        return reference is not None
+
     def _load_user_capabilities(
         self,
         space_id: str,
@@ -436,16 +542,16 @@ class AuthorizationEngine:
         self,
         capability: dict,
         operation: str,
-        state_path: str,
+        resource_path: str,
         user_public_key: Optional[str] = None
     ) -> bool:
         """
-        Check if a capability grants permission for an operation on a path
+        Check if a capability grants permission for an operation on a resource path
 
         Args:
             capability: Capability dict with 'op' and 'path'
             operation: 'read', 'create', 'modify', 'delete', or 'write'
-            state_path: State path being accessed
+            resource_path: Prefixed resource path being accessed
             user_public_key: User's public key for {self} wildcard resolution
 
         Returns:
@@ -455,7 +561,7 @@ class AuthorizationEngine:
         cap_path = capability["path"]
 
         # Check if path matches
-        if not self._path_matches(cap_path, state_path, user_public_key):
+        if not self._path_matches(cap_path, resource_path, user_public_key):
             return False
 
         # Check if operation is allowed
@@ -681,7 +787,7 @@ class AuthorizationEngine:
             if self._capability_grants_permission(
                 cap,
                 "create",
-                "auth/users/{any}/rights/",
+                "state/auth/users/{any}/rights/",
                 granted_by
             ):
                 can_grant = True
@@ -779,7 +885,7 @@ class AuthorizationEngine:
             if self._capability_grants_permission(
                 cap,
                 "create",
-                "auth/users/{any}/roles/",
+                "state/auth/users/{any}/roles/",
                 granted_by
             ):
                 can_grant_roles = True

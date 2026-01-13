@@ -10,7 +10,6 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 from identifiers import encode_space_id, encode_user_id
 import base64
-import json
 
 import sys
 from pathlib import Path
@@ -72,11 +71,11 @@ class TestStatePathValidation:
     def test_valid_state_paths_accepted(self, space, admin_token, admin_keypair):
         """Test that valid paths are accepted"""
         valid_paths = [
-            "profiles/alice",
+            "state/profiles/alice",
             "topics/general/messages",
-            "files/photo.jpg",
-            "api/v1.0/users",
-            "settings/theme",
+            "data/files/photo.jpg",
+            "state/api/v1.0/users",
+            "data/settings/theme",
         ]
 
         for path in valid_paths:
@@ -87,9 +86,9 @@ class TestStatePathValidation:
     def test_wildcard_injection_prevented(self, space, admin_token, admin_keypair):
         """Test that wildcards cannot be injected in user paths"""
         invalid_paths = [
-            "profiles/{self}",
+            "state/profiles/{self}",
             "topics/{any}/messages",
-            "auth/users/{other}/roles",
+            "state/auth/users/{other}/roles",
         ]
 
         for path in invalid_paths:
@@ -180,7 +179,7 @@ class TestCapabilityPathValidation:
         # Create capability with {self} wildcard
         capability = {
             "op": "write",
-            "path": "profiles/{self}/"
+            "path": "state/profiles/{self}/"
         }
         cap_path = f"auth/users/{admin_keypair['user_id']}/rights/cap_001"
 
@@ -193,7 +192,7 @@ class TestCapabilityPathValidation:
         # Create capability with unknown {custom} wildcard
         capability = {
             "op": "write",
-            "path": "users/{custom}/"
+            "path": "state/users/{custom}/"
         }
 
         # Grant the cap to some random user and try to validate

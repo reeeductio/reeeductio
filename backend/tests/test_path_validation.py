@@ -161,13 +161,14 @@ class TestCapabilityPathValidation:
     def test_valid_capability_paths(self):
         """Test valid capability paths with wildcards"""
         valid_paths = [
-            "profiles/{self}/",
+            "state/profiles/{self}/",
             "topics/{any}/messages/",
-            "auth/users/{self}/roles/",
-            "dms/{self}/{any}/",
-            "auth/users/{other}/banned",
-            "{any}/public/",
-            "files/{self}/{any}/{any}",
+            "state/auth/users/{self}/roles/",
+            "topics/{self}/{any}/",
+            "state/auth/users/{other}/banned",
+            "data/{any}/public/",
+            "data/files/{self}/{any}/{any}",
+            "blobs/{any}"
         ]
         for path in valid_paths:
             validate_capability_path(path)  # Should not raise
@@ -175,8 +176,8 @@ class TestCapabilityPathValidation:
     def test_valid_capability_paths_without_wildcards(self):
         """Test capability paths can be literal (no wildcards)"""
         valid_paths = [
-            "auth/roles/admin",
-            "settings/global",
+            "state/auth/roles/admin",
+            "data/settings/global",
             "topics/general/messages",
         ]
         for path in valid_paths:
@@ -185,10 +186,10 @@ class TestCapabilityPathValidation:
     def test_invalid_capability_paths_unknown_wildcards(self):
         """Test capability paths cannot use unknown wildcards"""
         invalid_paths = [
-            "users/{custom}",
+            "state/users/{custom}",
             "data/{id}",
-            "api/{version}/users",
-            "files/{self.id}",
+            "state/api/{version}/users",
+            "data/files/{self.id}",
         ]
         for path in invalid_paths:
             with pytest.raises(PathValidationError) as exc_info:
@@ -198,9 +199,9 @@ class TestCapabilityPathValidation:
     def test_invalid_capability_paths_special_chars(self):
         """Test capability paths cannot contain special characters"""
         invalid_paths = [
-            "my path/{self}",       # Space
-            "user@{self}/data",     # @ (caught as unknown wildcard)
-            "path?query/{any}",     # ? (caught as unknown wildcard)
+            "state/my path/{self}",       # Space
+            "data/user@{self}/data",     # @ (caught as unknown wildcard)
+            "state/path?query/{any}",     # ? (caught as unknown wildcard)
         ]
         for path in invalid_paths:
             with pytest.raises(PathValidationError) as exc_info:
@@ -236,7 +237,7 @@ class TestHelperFunctions:
 
     def test_is_valid_capability_path(self):
         """Test boolean capability path check"""
-        assert is_valid_capability_path("profiles/{self}/") is True
+        assert is_valid_capability_path("data/profiles/{self}/") is True
         assert is_valid_capability_path("topics/{any}/messages/") is True
         assert is_valid_capability_path("users/{custom}") is False
         assert is_valid_capability_path("my path/{self}") is False
@@ -249,16 +250,16 @@ class TestRealWorldExamples:
     def test_auth_paths(self):
         """Test authentication and authorization paths"""
         # User paths - literal IDs
-        assert is_valid_user_path("auth/users/U_abc123")
-        assert is_valid_user_path("auth/users/U_abc123/rights/cap_001")
-        assert is_valid_user_path("auth/users/U_abc123/roles/admin")
-        assert is_valid_user_path("auth/tools/T_join_key/rights/cap_002")
+        assert is_valid_user_path("state/auth/users/U_abc123")
+        assert is_valid_user_path("state/auth/users/U_abc123/rights/cap_001")
+        assert is_valid_user_path("state/auth/users/U_abc123/roles/admin")
+        assert is_valid_user_path("state/auth/tools/T_join_key/rights/cap_002")
 
         # Capability paths - with wildcards
-        assert is_valid_capability_path("auth/users/{any}/rights/")
-        assert is_valid_capability_path("auth/users/{self}/roles/")
-        assert is_valid_capability_path("auth/users/{other}/banned")
-        assert is_valid_capability_path("auth/tools/{any}/")
+        assert is_valid_capability_path("state/auth/users/{any}/rights/")
+        assert is_valid_capability_path("state/auth/users/{self}/roles/")
+        assert is_valid_capability_path("state/auth/users/{other}/banned")
+        assert is_valid_capability_path("state/auth/tools/{any}/")
 
     def test_message_paths(self):
         """Test message and topic paths"""
@@ -277,17 +278,6 @@ class TestRealWorldExamples:
         assert is_valid_user_path("profiles/U_alice/settings/theme")
 
         # Capability paths
-        assert is_valid_capability_path("profiles/{self}/")
-        assert is_valid_capability_path("profiles/{self}/settings/")
-        assert is_valid_capability_path("profiles/{any}/public/")
-
-    def test_file_paths(self):
-        """Test file storage paths with extensions"""
-        # User paths
-        assert is_valid_user_path("files/photo.jpg")
-        assert is_valid_user_path("files/2024-12-31/report.pdf")
-        assert is_valid_user_path("documents/contract_v1.0.docx")
-
-        # Capability paths
-        assert is_valid_capability_path("files/{self}/{any}")
-        assert is_valid_capability_path("photos/{self}/")
+        assert is_valid_capability_path("data/profiles/{self}/")
+        assert is_valid_capability_path("data/profiles/{self}/settings/")
+        assert is_valid_capability_path("data/profiles/{any}/public/")

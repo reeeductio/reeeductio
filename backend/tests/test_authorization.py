@@ -186,20 +186,20 @@ def test_modify_capability(unique_space, unique_admin_keypair, user_keypair):
         path=f"auth/users/{user_id}/rights/modify_test",
         contents={
             "op": "modify",
-            "path": "test/{...}"
+            "path": "state/test/{...}"
         },
         token=admin_token,
         keypair=unique_admin_keypair
     )
 
     # User should have modify permission
-    assert unique_space.authz.check_permission(space_id, user_id, "modify", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "modify", "state/test/data")
 
     # User should NOT have create permission (modify doesn't grant create)
-    assert not unique_space.authz.check_permission(space_id, user_id, "create", "test/data")
+    assert not unique_space.authz.check_permission(space_id, user_id, "create", "state/test/data")
 
     # User should NOT have delete permission (modify doesn't grant delete)
-    assert not unique_space.authz.check_permission(space_id, user_id, "delete", "test/data")
+    assert not unique_space.authz.check_permission(space_id, user_id, "delete", "state/test/data")
 
 
 def test_delete_capability(unique_space, unique_admin_keypair, user_keypair):
@@ -228,20 +228,20 @@ def test_delete_capability(unique_space, unique_admin_keypair, user_keypair):
         path=f"auth/users/{user_id}/rights/delete_test",
         contents={
             "op": "delete",
-            "path": "test/{...}"
+            "path": "state/test/{...}"
         },
         token=admin_token,
         keypair=unique_admin_keypair
     )
 
     # User should have delete permission
-    assert unique_space.authz.check_permission(space_id, user_id, "delete", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "delete", "state/test/data")
 
     # User should NOT have create permission (delete doesn't grant create)
-    assert not unique_space.authz.check_permission(space_id, user_id, "create", "test/data")
+    assert not unique_space.authz.check_permission(space_id, user_id, "create", "state/test/data")
 
     # User should NOT have modify permission (delete doesn't grant modify)
-    assert not unique_space.authz.check_permission(space_id, user_id, "modify", "test/data")
+    assert not unique_space.authz.check_permission(space_id, user_id, "modify", "state/test/data")
 
 
 def test_write_grants_all_operations(unique_space, unique_admin_keypair, user_keypair):
@@ -270,18 +270,18 @@ def test_write_grants_all_operations(unique_space, unique_admin_keypair, user_ke
         path=f"auth/users/{user_id}/rights/write_test",
         contents={
             "op": "write",
-            "path": "test/{...}"
+            "path": "state/test/{...}"
         },
         token=admin_token,
         keypair=unique_admin_keypair
     )
 
     # Write should grant all operations
-    assert unique_space.authz.check_permission(space_id, user_id, "read", "test/data")
-    assert unique_space.authz.check_permission(space_id, user_id, "create", "test/data")
-    assert unique_space.authz.check_permission(space_id, user_id, "modify", "test/data")
-    assert unique_space.authz.check_permission(space_id, user_id, "delete", "test/data")
-    assert unique_space.authz.check_permission(space_id, user_id, "write", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "read", "state/test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "create", "state/test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "modify", "state/test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "delete", "state/test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "write", "state/test/data")
 
 
 def test_modify_delete_independence(authz):
@@ -375,7 +375,7 @@ def test_owned_modify_capability(unique_space, unique_admin_keypair, user_keypai
         path=f"auth/users/{user_id}/rights/create_docs",
         contents={
             "op": "create",
-            "path": "docs/{...}",
+            "path": "state/docs/{...}",
         },
         token=admin_token,
         keypair=unique_admin_keypair
@@ -388,7 +388,7 @@ def test_owned_modify_capability(unique_space, unique_admin_keypair, user_keypai
         path=f"auth/users/{user_id}/rights/modify_owned_docs",
         contents={
             "op": "modify",
-            "path": "docs/{...}",
+            "path": "state/docs/{...}",
             "must_be_owner": True
         },
         token=admin_token,
@@ -424,11 +424,11 @@ def test_owned_modify_capability(unique_space, unique_admin_keypair, user_keypai
 
     # User should be able to modify their own document
     print("Checking access to user's doc")
-    assert unique_space.authz.check_permission(space_id, user_id, "modify", "docs/user_doc")
+    assert unique_space.authz.check_permission(space_id, user_id, "modify", "state/docs/user_doc")
 
     # User should NOT be able to modify admin's document
     print("Checking access to admin's doc")
-    assert not unique_space.authz.check_permission(space_id, user_id, "modify", "docs/admin_doc")
+    assert not unique_space.authz.check_permission(space_id, user_id, "modify", "state/docs/admin_doc")
 
 
 def test_owned_delete_capability(unique_space, unique_admin_keypair, user_keypair):
@@ -458,7 +458,7 @@ def test_owned_delete_capability(unique_space, unique_admin_keypair, user_keypai
         path=f"auth/users/{user_id}/rights/create_files",
         contents={
             "op": "create",
-            "path": "files/{...}"
+            "path": "state/files/{...}"
         },
         token=admin_token,
         keypair=unique_admin_keypair
@@ -470,7 +470,7 @@ def test_owned_delete_capability(unique_space, unique_admin_keypair, user_keypai
         path=f"auth/users/{user_id}/rights/delete_owned",
         contents={
             "op": "delete",
-            "path": "files/{...}",
+            "path": "state/files/{...}",
             "must_be_owner": True
         },
         token=admin_token,
@@ -503,10 +503,10 @@ def test_owned_delete_capability(unique_space, unique_admin_keypair, user_keypai
     )
 
     # User should be able to delete their own file
-    assert unique_space.authz.check_permission(space_id, user_id, "delete", "files/user_file")
+    assert unique_space.authz.check_permission(space_id, user_id, "delete", "state/files/user_file")
 
     # User should NOT be able to delete admin's file
-    assert not unique_space.authz.check_permission(space_id, user_id, "delete", "files/admin_file")
+    assert not unique_space.authz.check_permission(space_id, user_id, "delete", "state/files/admin_file")
 
 
 def test_owned_create_always_allowed(unique_space, unique_admin_keypair, user_keypair):
@@ -535,7 +535,7 @@ def test_owned_create_always_allowed(unique_space, unique_admin_keypair, user_ke
         path=f"auth/users/{user_id}/rights/create_owned",
         contents={
             "op": "create",
-            "path": "posts/{...}",
+            "path": "state/posts/{...}",
             "must_be_owner": True  # Should be ignored for create
         },
         token=admin_token,
@@ -543,7 +543,7 @@ def test_owned_create_always_allowed(unique_space, unique_admin_keypair, user_ke
     )
 
     # User should be able to create (ownership check skipped for create)
-    assert unique_space.authz.check_permission(space_id, user_id, "create", "posts/new_post")
+    assert unique_space.authz.check_permission(space_id, user_id, "create", "state/posts/new_post")
 
 
 def test_owned_nonexistent_entry(unique_space, unique_admin_keypair, user_keypair):
@@ -572,7 +572,7 @@ def test_owned_nonexistent_entry(unique_space, unique_admin_keypair, user_keypai
         path=f"auth/users/{user_id}/rights/modify_owned_items",
         contents={
             "op": "modify",
-            "path": "items/{...}",
+            "path": "state/items/{...}",
             "must_be_owner": True
         },
         token=admin_token,
@@ -581,7 +581,7 @@ def test_owned_nonexistent_entry(unique_space, unique_admin_keypair, user_keypai
 
     # User should NOT be able to modify non-existent entry
     # (no entry exists, so can't verify ownership)
-    assert not unique_space.authz.check_permission(space_id, user_id, "modify", "items/nonexistent")
+    assert not unique_space.authz.check_permission(space_id, user_id, "modify", "state/items/nonexistent")
 
 
 def test_ownership_dominance_unrestricted_over_restricted(authz):
