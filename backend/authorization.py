@@ -1024,11 +1024,17 @@ class AuthorizationEngine:
             print(f"Chain validation failed: No sender field in {member_path}")
             return False
 
+        # Detect circular chains (self-signed entries)
+        if signed_by == member_id:
+            print(f"Chain validation failed: Self-signed entry detected for {member_id}")
+            return False
+
         # Recursively verify the signer's chain
         # This prevents infinite loops because:
         # 1. Space admin case returns immediately (base case)
         # 2. Each member can only be signed once (no cycles in state)
-        # 3. Maximum depth is bounded by the number of members in the space
+        # 3. Self-signed entries are rejected above
+        # 4. Maximum depth is bounded by the number of members in the space
         signer_valid = self.verify_chain_of_trust(space_id, signed_by, skip_cache)
 
         if not signer_valid:
