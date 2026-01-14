@@ -84,7 +84,7 @@ def space_with_roles(unique_space, unique_admin_keypair):
     # Moderators can ban users
     mod_ban_cap = {
         "op": "write",
-        "path": "auth/users/{other}/banned"
+        "path": "state/auth/users/{other}/banned"
     }
     set_space_state(
         space=unique_space,
@@ -237,7 +237,7 @@ def test_multiple_roles(space_with_roles, user_keypair):
 
     # Check permissions from both roles
     assert space.authz.check_permission(space_id, user_id, "read", "anything")  # from user role
-    assert space.authz.check_permission(space_id, user_id, "write", "auth/users/U_other/banned")  # from moderator role
+    assert space.authz.check_permission(space_id, user_id, "write", "state/auth/users/U_other/banned")  # from moderator role
 
 
 def test_expired_role_grant_ignored(space_with_roles, user_keypair):
