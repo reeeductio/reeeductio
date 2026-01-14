@@ -562,6 +562,7 @@ class AuthorizationEngine:
 
         # Check if path matches
         if not self._path_matches(cap_path, resource_path, user_public_key):
+            print("Path doesn't match")
             return False
 
         # Check if operation is allowed
@@ -1199,6 +1200,9 @@ class AuthorizationEngine:
         Returns:
             True if tool creation is valid
         """
+
+        print(f"Verifying tool creation for path {path}")
+
         # Verify path-content consistency
         # Path format: auth/tools/{tool_id}
         parts = path.strip('/').split('/')
@@ -1229,18 +1233,24 @@ class AuthorizationEngine:
         creator_direct_caps = self._load_user_capabilities(space_id, creator_public_key)
         creator_role_caps = self._load_role_capabilities(space_id, creator_public_key)
         creator_all_caps = creator_direct_caps + creator_role_caps
+        print(f"Found {len(creator_all_caps)} total capabilities")
 
         # Check if creator has permission to create this specific tool
+        # Use unified namespace: prefix with "state/"
         can_create_tools = False
         for cap in creator_all_caps:
+            print(f"Looking at capability {cap["op"]} {cap["path"]}")
             if self._capability_grants_permission(
                 cap,
                 "create",
-                path,  # Check permission for the actual path being created
+                f"state/{path}",  # Check permission for the actual path being created (with state/ prefix)
                 creator_public_key
             ):
+                print("  Cap allows creating tools")
                 can_create_tools = True
                 break
+            else:
+                print("  Cap does not allow creating tools")
 
         if not can_create_tools:
             return False

@@ -123,7 +123,7 @@ class TestToolWithCapabilities:
         # Grant tool capability to create user entries
         tool_cap = {
             "op": "create",
-            "path": "auth/users/{any}"
+            "path": "state/auth/users/{any}"
         }
 
         # Store capability for tool
@@ -136,7 +136,7 @@ class TestToolWithCapabilities:
         )
 
         # Tool should now have permission to create users
-        assert unique_space.authz.check_permission(space_id, tool_id, "create", "auth/users/U_newuser")
+        assert unique_space.authz.check_permission(space_id, tool_id, "create", "state/auth/users/U_newuser")
 
     def test_tool_cannot_exceed_capability(self, unique_space, unique_admin_keypair, tool_keypair):
         """Tool cannot perform actions outside its capabilities"""
@@ -160,7 +160,7 @@ class TestToolWithCapabilities:
         # Grant tool capability to create user entries ONLY
         tool_cap = {
             "op": "create",
-            "path": "auth/users/{any}"
+            "path": "state/auth/users/{any}"
         }
         set_space_state(
             space=unique_space,
@@ -171,13 +171,13 @@ class TestToolWithCapabilities:
         )
 
         # Tool can create users
-        assert unique_space.authz.check_permission(space_id, tool_id, "create", "auth/users/U_newuser")
+        assert unique_space.authz.check_permission(space_id, tool_id, "create", "state/auth/users/U_newuser")
 
         # But cannot read other data
         assert not unique_space.authz.check_permission(space_id, tool_id, "read", "messages/msg1")
 
         # Cannot write to users (only create)
-        assert not unique_space.authz.check_permission(space_id, tool_id, "write", "auth/users/U_existing")
+        assert not unique_space.authz.check_permission(space_id, tool_id, "write", "state/auth/users/U_existing")
 
     def test_tool_with_role_grant_capability(self, unique_space, unique_admin_keypair, tool_keypair):
         """Test tool that can grant roles"""
@@ -214,7 +214,7 @@ class TestToolWithCapabilities:
         # Grant tool capability to create user entries (not deeper paths!)
         tool_cap1 = {
             "op": "create",
-            "path": "auth/users/{any}"
+            "path": "state/auth/users/{any}"
         }
         set_space_state(
             space=unique_space,
@@ -227,7 +227,7 @@ class TestToolWithCapabilities:
         # Grant tool capability to assign "user" role
         tool_cap2 = {
             "op": "create",
-            "path": "auth/users/{any}/roles/user"
+            "path": "state/auth/users/{any}/roles/user"
         }
         set_space_state(
             space=unique_space,
@@ -238,13 +238,13 @@ class TestToolWithCapabilities:
         )
 
         # Tool can create users
-        assert unique_space.authz.check_permission(space_id, tool_id, "create", "auth/users/U_alice")
+        assert unique_space.authz.check_permission(space_id, tool_id, "create", "state/auth/users/U_alice")
 
         # Tool can grant "user" role
-        assert unique_space.authz.check_permission(space_id, tool_id, "create", "auth/users/U_alice/roles/user")
+        assert unique_space.authz.check_permission(space_id, tool_id, "create", "state/auth/users/U_alice/roles/user")
 
         # But cannot grant other roles
-        assert not unique_space.authz.check_permission(space_id, tool_id, "create", "auth/users/U_alice/roles/admin")
+        assert not unique_space.authz.check_permission(space_id, tool_id, "create", "state/auth/users/U_alice/roles/admin")
 
 
 class TestToolCreationValidation:
@@ -351,7 +351,7 @@ class TestToolCreationValidation:
         # Grant user permission to create tools
         user_cap = {
             "op": "create",
-            "path": "auth/tools/{any}"
+            "path": "state/auth/tools/{any}"
         }
         set_space_state(
             space=unique_space,
@@ -362,6 +362,7 @@ class TestToolCreationValidation:
         )
 
         # Now user can create tools
+        print("Verifying tool creation ability")
         assert unique_space.authz.verify_tool_creation(
             space_id,
             f"auth/tools/{tool_id}",
@@ -394,7 +395,7 @@ class TestToolCreationValidation:
         # Give user permission to create tool entries
         user_cap = {
             "op": "create",
-            "path": "auth/tools/{any}"
+            "path": "state/auth/tools/{any}"
         }
         set_space_state(
             space=unique_space,
@@ -482,7 +483,7 @@ class TestToolAuthentication:
         # Grant tool capability to create messages
         tool_cap = {
             "op": "create",
-            "path": "messages/{...}"
+            "path": "topics/{...}"
         }
         set_space_state(
             space=unique_space,
@@ -511,9 +512,9 @@ class TestToolAuthentication:
         assert 'expires_at' in token_response
 
         # 5. Verify tool has permissions via capability (not ambient authority)
-        assert unique_space.authz.check_permission(space_id, tool_id, "create", "messages/msg1")
+        assert unique_space.authz.check_permission(space_id, tool_id, "create", "topics/msg1")
         # Tool should NOT have read permission (no ambient authority)
-        assert not unique_space.authz.check_permission(space_id, tool_id, "read", "messages/msg1")
+        assert not unique_space.authz.check_permission(space_id, tool_id, "read", "topics/msg1")
 
     def test_tool_not_registered_cannot_authenticate(self, unique_space, tool_keypair):
         """Test that unregistered tools cannot authenticate"""
@@ -583,7 +584,7 @@ class TestToolUseLimiting:
         cap_info = {
             # TODO FIXME Add "subject" to all capabilities
             "op": "write",
-            "path": "test/{...}"
+            "path": "state/test/{...}"
         }
         set_space_state(
             space=unique_space,
@@ -636,7 +637,7 @@ class TestToolUseLimiting:
         cap_path=f"auth/tools/{tool_id}/rights/cap_001"
         cap_info = {
             "op": "write",
-            "path": "test/{...}"
+            "path": "state/test/{...}"
         }
         set_space_state(unique_space, cap_path, cap_info, admin_token, unique_admin_keypair)
 
@@ -684,7 +685,7 @@ class TestToolUseLimiting:
         cap_path = f"auth/tools/{tool_id}/rights/cap_001"
         cap_info = {
             "op": "write",
-            "path": "allowed/{...}"
+            "path": "state/allowed/{...}"
         }
         set_space_state(unique_space, cap_path, cap_info, admin_token, unique_admin_keypair)
 
@@ -765,7 +766,7 @@ class TestToolUseLimiting:
         cap_path = f"auth/users/{user_id}/rights/write_to_test"
         cap_info = {
             "op": "write",
-            "path": "test/{any}"
+            "path": "state/test/{any}"
         }
         set_space_state(unique_space, cap_path, cap_info, admin_token, unique_admin_keypair)
 

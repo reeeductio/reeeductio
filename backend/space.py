@@ -318,8 +318,8 @@ class Space:
         # (member might be a user or a tool)
         member = self.authenticate_request(token)
 
-        # Check read permission
-        if not self.check_permission(member["id"], "read", path):
+        # Check read permission (use unified namespace: prefix with "state/")
+        if not self.check_permission(member["id"], "read", f"state/{path}"):
             raise ValueError("No read permission")
 
         # Get state - In the event-sourced state model,
