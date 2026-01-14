@@ -265,7 +265,7 @@ def test_post_message_privilege_escalation_blocked(unique_space, message_store, 
     # Admin creates a capability allowing user to write to their profile
     capability_data = {
         "op": "modify",
-        "path": f"profiles/{user_keypair['id']}/{{...}}"  # User can modify their own profile
+        "path": f"state/profiles/{user_keypair['id']}/{{...}}"  # User can modify their own profile
     }
     capability_path = f"auth/users/{user_keypair['id']}/rights/cap_profile_write"
 
