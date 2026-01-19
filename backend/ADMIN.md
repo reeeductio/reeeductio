@@ -1,85 +1,118 @@
 # Server Admin Interface
-The server provides an API under /admin for managing server-level users (above the level of individual spaces) and for creating spaces.
 
-Top-level users of the server can create and delete spaces, and server admins can also delete blobs (and maybe messages).
+The server provides an API under /admin for managing server-level users (above the level of individual spaces) and for administrative operations that require server-side orchestration.
 
-Like users within individual spaces, users at the server level are identified only by their public key.  In fact, the admin interface stores all of its data in a special-purpose space, which can also be used through the normal space API to manage the server state.
+Top-level users of the server can create spaces directly through the admin space's normal API. Server admins can also perform administrative operations like deleting spaces and blobs.
+
+Like users within individual spaces, users at the server level are identified only by their public key. The admin interface stores all of its data in a special-purpose space (the "admin space"), which uses the normal space API for most operations.
+
+## Admin Space Overview
+
+The admin space is a special space managed by the `AdminSpace` class, which extends the regular `Space` class with additional validation rules for space registration.
+
+### Key Differences from Regular Spaces
+
+1. **Space registration validation**: Writes to `spaces/{space_id}` require:
+   - A valid `space_signature` proving ownership of the space's private key
+   - The `created_by` field must match the authenticated user
+
+2. **Direct user writes**: Server users write directly to the admin space state using the normal space API, rather than going through a server-mediated `/admin` endpoint.
+
+3. **Role-based permissions**: Users are granted the `space-creator` role, which gives them permission to register spaces.
 
 ## Admin Space Membership Model
 
 The admin space has two tiers of membership:
 
 ### Server Users (Space Creators)
-- **Purpose**: Authentication only
+- **Purpose**: Create and register spaces
 - **Admin space membership**: YES (under `auth/users/{user_id}`)
-- **Capabilities in admin space**: None - they exist for authentication but have no roles or capabilities
-- **What they CAN do**: Authenticate to get JWT tokens, then use `/admin` endpoints
-- **What they CAN'T do via normal space API**: Cannot read/write any state in the admin space, cannot send messages
-- **Admin API powers**: Create spaces (via `PUT /admin/spaces/{space_id}`)
+- **Role**: `space-creator` (granted at `auth/users/{user_id}/roles/space-creator`)
+- **What they CAN do**:
+  - Authenticate to get JWT tokens
+  - Create space registry entries at `spaces/{space_id}` via normal space API
+  - Create entries in their own space index at `users/{user_id}/spaces/{space_id}`
+- **What they CAN'T do**:
+  - Modify or delete existing space entries
+  - Write to other users' space indexes
+  - Access admin-only operations
 
 ### Server Admins
 - **Purpose**: Full server management
 - **Admin space membership**: YES (under `auth/users/{user_id}`)
-- **Capabilities in admin space**: Full access via `server-admin` role
+- **Role**: `server-admin` with full capabilities
 - **What they CAN do**: Manage all admin space state via normal space API or `/admin` endpoints
-- **Admin API powers**: All admin operations including user management
+- **Admin API powers**: All admin operations including user management, space deletion, blob deletion
 
-## Example admin functions
+## Space Registration Flow
 
-### Creating spaces and top-level users
-* `PUT /admin/auth/users/{user_id}`
-* `PUT /admin/spaces/{space_id}`
+When user U1 wants to create a new space:
 
-### Getting information
-* `GET /admin/auth/users/{user_id}`
-* `GET /admin/spaces/{space_id}`
-* `GET /admin/blobs/{blob_id}`
+1. **Generate space keypair**: Client generates an Ed25519 keypair for the new space
+2. **Create registration data**: Client prepares:
+   ```json
+   {
+       "space_id": "C_abc123...",
+       "created_by": "U_xyz789...",
+       "created_at": 1234567890,
+       "space_signature": "base64_signature_proving_ownership"
+   }
+   ```
+3. **Sign with space key**: The `space_signature` is the space's private key signing over `{space_id}|{created_by}|{created_at}`
+4. **Write to admin space**: User writes to `spaces/{space_id}` via the normal state API
+5. **Index the space**: User writes to `users/{user_id}/spaces/{space_id}` for their own index
 
-### Deleting spaces, users, and blobs (and messages?)
-* `DELETE /admin/auth/users/{user_id}`
-* `DELETE /admin/spaces/{space_id}`
-* `DELETE /admin/blobs/{blob_id}`
-* `DELETE /admin/spaces/{space_id}/messages/{message_id}`
+### Space Signature Verification
 
-## The Admin Space
-The server uses a space to store its top-level admin data.
+The `AdminSpace` class validates space registrations by:
+1. Extracting the public key from `space_id`
+2. Verifying `space_signature` over the canonical message `"{space_id}|{created_by}|{created_at}"`
+3. Ensuring `created_by` matches the authenticated user
 
-The admin private key for this special space must be included in the server's configuration.
+This proves the user has control of the space's private key.
 
-If the server owner also keeps a local copy of the admin private key, then they can manage the server remotely via the space's regular API interface.
+## The space-creator Role
 
-### Admin Space State Structure
+Server users are granted the `space-creator` role, which provides:
 
-The admin space uses the following state hierarchy:
-
-#### Server Users
-Information on each server-level user is stored at `users/{user_id}`:
 ```json
+// Role definition at auth/roles/space-creator
 {
-  "user_id": "U_abc123...",
-  "can_create_spaces": true,
-  "max_spaces": 10,
-  "created_at": 1234567890
+  "role_id": "space-creator",
+  "description": "Can register new spaces in the admin space"
+}
+
+// Capability 1: Create space registry entries
+// at auth/roles/space-creator/rights/cap_000
+{
+  "op": "create",
+  "path": "state/spaces/{any}"
+}
+
+// Capability 2: Create entries in own user space index
+// at auth/roles/space-creator/rights/cap_001
+{
+  "op": "create",
+  "path": "state/users/{self}/spaces/{any}"
 }
 ```
 
-This is application-level metadata used by the `/admin` API for quota enforcement. Note that this is separate from the user's authentication entry at `auth/users/{user_id}`, which may have no roles or capabilities.
+The `{self}` wildcard ensures users can only write to their own space index.
 
-#### Space Registry
+## Admin Space State Structure
+
+### Space Registry
 The canonical registry of all spaces is stored at `spaces/{space_id}`:
 ```json
 {
   "space_id": "C_abc123...",
   "created_by": "U_xyz789...",
   "created_at": 1234567890,
-  "signature": "user_signature",
-  "space_signature": "space_signature"
+  "space_signature": "base64_signature"
 }
 ```
 
-This registry serves as the single source of truth for space existence and prevents duplicate space creation.
-
-#### User Space Index
+### User Space Index
 For each user, their spaces are indexed at `users/{user_id}/spaces/{space_id}`:
 ```json
 {
@@ -87,131 +120,118 @@ For each user, their spaces are indexed at `users/{user_id}/spaces/{space_id}`:
 }
 ```
 
-This enables efficient "list spaces created by user" queries for quota enforcement.
+This enables efficient "list spaces created by user" queries.
 
 ## Authentication
-The admin API's authentication and authorization scheme are exactly the same as for the admin space.  Any member of the admin space can authenticate to the admin API using the same Ed25519 keys and JWT tokens that they use with the admin space.
 
-The admin API exposes the `GET /admin/auth/challenge` and `POST /admin/auth/verify` endpoints for convenience, so clients do not need to know or remember the admin space id.
+The admin API's authentication scheme is the same as for regular spaces. Any member of the admin space can authenticate using Ed25519 keys and JWT tokens.
 
-## Authorization
+The admin API exposes convenience endpoints so clients don't need to know the admin space ID:
+- `GET /admin/auth/challenge` - Get authentication challenge
+- `POST /admin/auth/verify` - Verify signature and get JWT
 
-Admin API calls are authorized based on the authenticated user's permissions and server-level metadata.
+## The /admin API Endpoints
 
-### Space Creation Flow
+The `/admin` API is now primarily for operations that require server-side orchestration:
 
-When user U1 calls `PUT /admin/spaces/{space_id}`, the following validation occurs:
+### Still Required
 
-1. **JWT Authentication**: User must have a valid JWT token for the admin space
-2. **User Permissions**: User's entry at `users/{user_id}` must have `can_create_spaces: true`
-3. **Quota Check**: If `max_spaces` is set, count spaces where `created_by == user_id` and ensure limit not exceeded
-4. **Duplicate Prevention**: Verify no entry exists at `spaces/{space_id}`
-5. **Space Ownership Proof**: Verify the `space_signature` in the request body
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /admin/auth/challenge` | Convenience endpoint for auth (don't need to know admin space ID) |
+| `POST /admin/auth/verify` | Convenience endpoint for auth |
+| `DELETE /admin/spaces/{space_id}` | Delete space with cascade cleanup |
+| `DELETE /admin/blobs/{blob_id}` | Delete blob from storage |
+| `PUT/DELETE /admin/auth/users/{user_id}` | Server admin user management |
 
-The request body must contain:
-```json
-{
-    "space_id": "C_abc123...",
-    "created_by": "U_xyz789...",
-    "created_at": 1234567890,
-    "signature": "user_signature_over_this_object",
-    "space_signature": "space_key_signature_proving_ownership"
-}
-```
+### No Longer Required (Use Normal Space API)
 
-**Two signatures are required:**
-- **User signature**: The user signs the entire JSON object to prove they intend to create this space
-- **Space signature**: The space private key signs `{space_id, created_by, created_at}` to prove ownership and consent
+| Old Endpoint | New Approach |
+|--------------|--------------|
+| `PUT /admin/spaces/{space_id}` | Write directly to admin space at `spaces/{space_id}` |
+| `GET /admin/spaces/{space_id}` | Read from admin space at `spaces/{space_id}` |
+| `GET /admin/auth/users/{user_id}` | Read from admin space at `auth/users/{user_id}` |
 
-### Server Writes State on User's Behalf
+## Roles and Permissions
 
-Importantly, the `/admin` API endpoints do **not** write to the admin space state as the authenticated user. Instead, the server validates the user's request and then writes the state entries using the **admin space creator private key** (from server configuration).
+### Server Users (space-creator role)
+Capabilities:
+- `{ op: "create", path: "state/spaces/{any}" }` - Register new spaces
+- `{ op: "create", path: "state/users/{self}/spaces/{any}" }` - Index own spaces
 
-This means:
-- Server users do not need any write capabilities in the admin space
-- All admin space state modifications are signed by the server (admin space creator)
-- The user's signed data is embedded in the state entry's data payload for audit purposes
+### Server Admins (server-admin role)
+Capabilities:
+- `{ op: "write", path: "state/auth/{...}" }` - Manage admin space membership and roles
+- `{ op: "write", path: "state/spaces/{...}" }` - Manage space registry
+- `{ op: "write", path: "state/users/{...}" }` - Manage user metadata
+- `{ op: "delete", path: "state/spaces/{...}" }` - Delete space entries
 
-When the server processes `PUT /admin/spaces/{space_id}`, it:
-1. Validates the user's request (authentication, permissions, signatures, quota)
-2. Writes to `spaces/{space_id}` **as the admin space creator**
-3. Writes to `users/{user_id}/spaces/{space_id}` **as the admin space creator**
-4. Initializes the actual space in the space manager
+## Bootstrap Procedure
 
-### Roles and Permissions
+On first server startup:
 
-The admin space defines two conceptual roles, but they work differently:
+1. **Create admin space**: Initialize using admin space ID and creator private key from config
+2. **Create space-creator role**: Write role definition to `auth/roles/space-creator`
+3. **Add role capabilities**: Write capabilities to `auth/roles/space-creator/rights/`
+4. **Create server-admin role**: Write role definition with full capabilities
+5. **Bootstrap first admin**: Create admin user entry and grant `server-admin` role
 
-#### Server Users (Space Creators)
-Server users are members of the admin space but have **no capabilities** assigned. Their permissions are defined purely by application-level metadata at `users/{user_id}`:
-- `can_create_spaces`: Whether user can create spaces via `/admin/spaces`
-- `max_spaces`: Optional quota limit
+The `AdminSpace.get_bootstrap_state_entries()` method provides the entries needed for steps 2-3.
 
-Server users authenticate to the admin space to get JWT tokens, but cannot read or write any admin space state via the normal space API. They can only operate through the `/admin` endpoints, which validate their permissions and write state on their behalf.
+## Security Considerations
 
-#### Server Admins
-Server admins have the `server-admin` role with full capabilities:
+### Simplified Trust Model
+- Users write directly to the admin space - no server-side tool key needed for space creation
+- The admin private key is only needed for bootstrap and admin operations
+- If a user's key is compromised, only their spaces are at risk (they can't modify others)
 
-**Role: `auth/roles/server-admin`**
-- `{ op: "write", path: "auth/{...}" }` - Manage admin space membership and roles
-- `{ op: "write", path: "spaces/{...}" }` - Manage space registry
-- `{ op: "write", path: "users/{...}" }` - Manage user metadata and quotas
-- `{ op: "delete", path: "spaces/{...}" }` - Delete spaces
+### Validation Guarantees
+- `space_signature` proves ownership of the space's private key
+- `created_by` enforcement prevents users from registering spaces on behalf of others
+- The `create` capability prevents modification or deletion of existing entries
 
-Server admins can manage the server either through `/admin` endpoints or by directly interacting with the admin space's state using the normal space API.
+### What's NOT Enforced
+- **Quotas**: The current design does not enforce space creation quotas. This could be added later via:
+  - Soft enforcement (periodic audit and disable over-quota users)
+  - Pre-write hooks in `AdminSpace._check_state_operation()`
+  - A separate quota service
 
 ## Implementation Notes
 
-### Space Creation Validation
+### AdminSpace Class
 
-The `/admin/spaces/{space_id}` endpoint must validate:
+The `AdminSpace` class (`admin_space.py`) extends `Space` with:
 
-1. **Space signature verification**: Extract the public key from `space_id`, verify the signature over `{space_id, created_by, created_at}` matches
-2. **User signature verification**: Verify the user's signature over the entire request body
-3. **Consistency checks**:
-   - `space_id` in body matches URL parameter
-   - `created_by` in body matches authenticated user from JWT
-4. **Duplicate check**: Query admin space state for `spaces/{space_id}` - return 409 Conflict if exists
-5. **Quota enforcement**: If user has `max_spaces` set, count existing spaces and reject if quota exceeded
+1. **`_check_state_operation()` override**: Adds validation for space registration paths
+2. **`_validate_space_registration()`**: Enforces space_signature and created_by rules
+3. **`_verify_space_signature()`**: Cryptographic verification of space ownership
+4. **`get_bootstrap_state_entries()`**: Returns entries needed to set up space-creator role
 
-### Error Responses
+### SpaceManager Integration
 
-| Status Code | Condition |
-|-------------|-----------|
-| 400 Bad Request | Invalid space_id format, missing required fields, signature verification failed |
-| 401 Unauthorized | Missing or invalid JWT token |
-| 403 Forbidden | User's `can_create_spaces` is false, or quota exceeded |
-| 409 Conflict | Space already exists in registry |
-| 500 Internal Server Error | Failed to write to admin space state or initialize space |
+The `SpaceManager` accepts an `admin_space_id` parameter and returns an `AdminSpace` instance when that space is requested:
 
-### Space Deletion
+```python
+space_manager = SpaceManager(
+    admin_space_id="C_admin_space_id_here",
+    # ... other config
+)
 
-When deleting a space via `DELETE /admin/spaces/{space_id}`:
-1. Remove entry from `spaces/{space_id}`
-2. Find and remove entry from `users/{created_by}/spaces/{space_id}`
-3. Delete the actual space data (state store, message store)
-4. Optionally delete associated blobs (if not shared with other spaces)
+# Returns AdminSpace for admin space, regular Space for others
+space = space_manager.get_space(space_id)
+```
 
-### Bootstrap Procedure
+## Extension Ideas
 
-On first server startup:
-1. Check if admin space exists; if not, create it using the admin space ID and creator private key from config
-2. Initialize admin space with the `server-admin` role definition
-3. Create the first server admin user entry (bootstrap admin from config)
-4. Grant bootstrap admin the `server-admin` role
+### Managing S3 Buckets
+We could have different S3 buckets for different server-level users. When user U1 creates a space, that space's blobs could be stored in user U1's bucket.
 
-### Security Considerations
+Bucket information could be stored under `buckets/{bucket_id}` or `users/{user_id}/buckets/{bucket_id}`.
 
-- The admin space creator private key is highly sensitive - compromise allows full server control
-- Consider encrypting the admin private key in config with a passphrase required at server startup
-- Server users cannot bypass `/admin` validation by writing directly to admin space (they have no capabilities)
-- All space creations are non-repudiable (both user and space signatures preserved in state)
+This would let server admins allow users to bring their own buckets (BYOB) and pay for their own storage.
 
-# Extension ideas
-
-## Managing S3 Buckets
-We could have different S3 buckets for different server-level users.  Then when user U1 creates a space, that space's blobs are stored in user U1's bucket.
-
-Bucket information could be stored under `server/buckets/{bucket_id}` or under `server/users/{user_id}/buckets/{bucket_id}`.
-
-This might be nice because then the server admin can let their friends bring their own buckets (heh BYOB) and pay for their own storage.
+### Quota Enforcement
+If quotas become necessary:
+1. Store quota info at `users/{user_id}` with `max_spaces` field
+2. Add quota checking in `AdminSpace._check_state_operation()` before allowing space creation
+3. Query existing spaces count with `list_state("users/{user_id}/spaces/")`

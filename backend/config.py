@@ -128,6 +128,22 @@ class LoggingConfig(BaseModel):
     )
 
 
+class AdminConfig(BaseModel):
+    """Admin space configuration"""
+    space_id: Optional[str] = Field(
+        default=None,
+        description="Admin space ID (enables admin API when set)"
+    )
+    user_id: Optional[str] = Field(
+        default=None,
+        description="Admin user ID for server-initiated operations"
+    )
+    private_key: Optional[str] = Field(
+        default=None,
+        description="Base64-encoded Ed25519 private key for admin user (32 bytes)"
+    )
+
+
 class ServerConfig(BaseSettings):
     """Configuration for server settings"""
 
@@ -182,6 +198,9 @@ class AppConfig(BaseSettings):
 
     # Server configuration
     server: ServerConfig = Field(default_factory=ServerConfig)
+
+    # Admin configuration
+    admin: AdminConfig = Field(default_factory=AdminConfig)
 
     # Database configuration
     database: DatabaseConfig = Field(default_factory=lambda: SqliteDatabaseConfig())
@@ -248,6 +267,9 @@ class AppConfig(BaseSettings):
         if "logging" in data and isinstance(data["logging"], dict):
             data["logging"] = LoggingConfig(**data["logging"])
 
+        if "admin" in data and isinstance(data["admin"], dict):
+            data["admin"] = AdminConfig(**data["admin"])
+
         if "database" in data and isinstance(data["database"], dict):
             db_data = data["database"]
             db_type = db_data.get("type", "sqlite")
@@ -293,6 +315,7 @@ class AppConfig(BaseSettings):
             # Load from environment variables and defaults
             config = cls(
                 server=ServerConfig(),
+                admin=AdminConfig(),
                 database=SqliteDatabaseConfig(),
                 blob_store=FilesystemBlobConfig()
             )

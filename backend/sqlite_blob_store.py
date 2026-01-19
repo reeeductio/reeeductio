@@ -189,3 +189,30 @@ class SqliteBlobStore(BlobStore):
                 return True
 
             return False
+
+    def delete_blob(self, blob_id: str) -> bool:
+        """
+        Unconditionally delete a blob and all its references (admin operation).
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            True if blob was deleted, False if blob did not exist
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Delete all references first (foreign key constraint)
+            cursor.execute(
+                "DELETE FROM blob_references WHERE blob_id = ?",
+                (blob_id,)
+            )
+
+            # Delete the blob content
+            cursor.execute(
+                "DELETE FROM blobs WHERE blob_id = ?",
+                (blob_id,)
+            )
+
+            return cursor.rowcount > 0

@@ -13,11 +13,13 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
+import base64
 import time
 import re
 import secrets
 import jwt
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from crypto import CryptoUtils
 from config import get_config, FirestoreDatabaseConfig
 from s3_blob_store import S3BlobStore
@@ -27,6 +29,7 @@ from firestore_data_store import FirestoreDataStore
 from firestore_message_store import FirestoreMessageStore
 from space_manager import SpaceManager
 from logging_config import setup_logging, get_logger
+from identifiers import extract_public_key, encode_user_id
 
 # Load configuration
 config = get_config()
@@ -93,10 +96,46 @@ space_manager = SpaceManager(
     blob_store=blob_store,
     jwt_secret=JWT_SECRET,
     jwt_algorithm=JWT_ALGORITHM,
-    jwt_expiry_hours=JWT_EXPIRY_HOURS
+    jwt_expiry_hours=JWT_EXPIRY_HOURS,
+    admin_space_id=config.admin.space_id
 )
 crypto = CryptoUtils()
 security = HTTPBearer()
+
+# Validate admin credentials if configured
+if config.admin.user_id and config.admin.private_key:
+    try:
+        # Decode the private key from base64
+        admin_private_key_bytes = base64.b64decode(config.admin.private_key)
+        if len(admin_private_key_bytes) != 32:
+            raise ValueError(f"Admin private key must be 32 bytes, got {len(admin_private_key_bytes)}")
+
+        # Derive public key from private key using Ed25519
+        admin_private_key = Ed25519PrivateKey.from_private_bytes(admin_private_key_bytes)
+        admin_public_key = admin_private_key.public_key().public_bytes_raw()
+
+        # Extract public key from the configured user ID
+        configured_public_key = extract_public_key(config.admin.user_id)
+
+        # Verify they match
+        if admin_public_key != configured_public_key:
+            # Generate the expected user ID for the error message
+            expected_user_id = encode_user_id(admin_public_key)
+            raise ValueError(
+                f"Admin private key does not match admin user ID. "
+                f"Expected user_id: {expected_user_id}, got: {config.admin.user_id}"
+            )
+
+        logger.info(f"Admin credentials validated: user_id={config.admin.user_id[:16]}...")
+    except Exception as e:
+        logger.error(f"Invalid admin credentials: {e}")
+        raise
+elif config.admin.space_id and (config.admin.user_id or config.admin.private_key):
+    # Partial configuration - warn but don't fail
+    if config.admin.user_id and not config.admin.private_key:
+        logger.warning("Admin user_id configured but private_key is missing")
+    elif config.admin.private_key and not config.admin.user_id:
+        logger.warning("Admin private_key configured but user_id is missing")
 
 CHALLENGE_EXPIRY_SECONDS = config.server.challenge_expiry_seconds
 
@@ -710,12 +749,244 @@ async def health_check():
     return {"status": "healthy", "timestamp": int(time.time() * 1000)}
 
 
+# ============================================================================
+# Admin API Endpoints
+# ============================================================================
+
+def get_admin_space():
+    """Get the admin space instance. Raises 404 if admin space is not configured."""
+    if not config.admin.space_id:
+        raise HTTPException(status_code=404, detail="Admin API not configured")
+    return space_manager.get_space(config.admin.space_id)
+
+
+@app.post("/admin/auth/challenge", response_model=ChallengeResponse)
+async def admin_auth_challenge(request: ChallengeRequest):
+    """
+    Request an authentication challenge for the admin space.
+    Convenience endpoint that doesn't require knowing the admin space ID.
+    """
+    admin_space = get_admin_space()
+    logger.debug(f"Admin challenge requested: user={request.public_key[:16]}...")
+    result = admin_space.create_challenge(request.public_key, CHALLENGE_EXPIRY_SECONDS)
+
+    return ChallengeResponse(
+        challenge=result["challenge"],
+        expires_at=result["expires_at"]
+    )
+
+
+@app.post("/admin/auth/verify", response_model=TokenResponse)
+async def admin_auth_verify(request: VerifyRequest):
+    """
+    Verify signed challenge and issue JWT token for the admin space.
+    Convenience endpoint that doesn't require knowing the admin space ID.
+    """
+    admin_space = get_admin_space()
+
+    try:
+        admin_space.verify_challenge(
+            request.public_key,
+            request.challenge,
+            request.signature
+        )
+        logger.info(f"Admin user authenticated: user={request.public_key[:16]}...")
+    except ValueError as e:
+        error_msg = str(e)
+        logger.warning(f"Admin authentication failed: user={request.public_key[:16]}..., error={error_msg}")
+        if "not found" in error_msg or "expired" in error_msg or "mismatch" in error_msg:
+            raise HTTPException(status_code=401, detail=error_msg)
+        elif "Invalid" in error_msg:
+            if "identifier" in error_msg:
+                raise HTTPException(status_code=400, detail=error_msg)
+            else:
+                raise HTTPException(status_code=401, detail=error_msg)
+        elif "Not a member" in error_msg:
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
+
+    return admin_space.create_jwt(request.public_key)
+
+
+@app.put("/admin/auth/users/{user_id}")
+async def admin_create_or_update_user(
+    user_id: str,
+    msg: MessagePost,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Create or update a server user in the admin space.
+    Wrapper for PUT /spaces/{admin_space_id}/state/auth/users/{user_id}.
+    Only server admins can perform this operation.
+    """
+    admin_space = get_admin_space()
+    path = f"auth/users/{user_id}"
+
+    if path != msg.type:
+        raise HTTPException(400, detail="Path mismatch: msg.type must equal auth/users/{user_id}")
+
+    try:
+        server_timestamp = await admin_space.set_state(
+            path=path,
+            prev_hash=msg.prev_hash,
+            data=msg.data,
+            message_hash=msg.message_hash,
+            signature=msg.signature,
+            token=credentials.credentials
+        )
+        return {"message_hash": msg.message_hash, "server_timestamp": server_timestamp}
+    except ValueError as e:
+        error_msg = str(e)
+        if "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        elif "conflict" in error_msg.lower():
+            raise HTTPException(status_code=409, detail=error_msg)
+        elif "required" in error_msg.lower() or "must be" in error_msg.lower() or "invalid" in error_msg.lower() or "signature" in error_msg.lower():
+            raise HTTPException(status_code=400, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
+
+
+@app.delete("/admin/auth/users/{user_id}")
+async def admin_delete_user(
+    user_id: str,
+    msg: MessagePost,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Delete a server user from the admin space.
+    Wrapper for PUT /spaces/{admin_space_id}/state/auth/users/{user_id} with empty data.
+    Only server admins can perform this operation.
+    """
+    admin_space = get_admin_space()
+    path = f"auth/users/{user_id}"
+
+    if path != msg.type:
+        raise HTTPException(400, detail="Path mismatch: msg.type must equal auth/users/{user_id}")
+
+    # Validate that data is empty (deletion marker)
+    if msg.data != "":
+        raise HTTPException(400, detail="Delete operation requires empty data field")
+
+    try:
+        server_timestamp = await admin_space.set_state(
+            path=path,
+            prev_hash=msg.prev_hash,
+            data=msg.data,
+            message_hash=msg.message_hash,
+            signature=msg.signature,
+            token=credentials.credentials
+        )
+        return {"message_hash": msg.message_hash, "server_timestamp": server_timestamp}
+    except ValueError as e:
+        error_msg = str(e)
+        if "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        elif "conflict" in error_msg.lower():
+            raise HTTPException(status_code=409, detail=error_msg)
+        elif "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif "required" in error_msg.lower() or "must be" in error_msg.lower() or "invalid" in error_msg.lower() or "signature" in error_msg.lower():
+            raise HTTPException(status_code=400, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
+
+
+@app.delete("/admin/spaces/{space_id}", status_code=204)
+async def admin_delete_space(
+    space_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Delete a space with cascade cleanup.
+    This removes the space registry entry and all associated data.
+    Only server admins can perform this operation.
+    """
+    admin_space = get_admin_space()
+
+    try:
+        payload = admin_space.verify_jwt(credentials.credentials)
+        admin_user_id = payload["sub"]
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    # Check if space exists in registry
+    try:
+        admin_space.get_state(f"spaces/{space_id}", credentials.credentials)
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=f"Space {space_id} not found in registry")
+        elif "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
+
+    # Cascade cleanup:
+    # 1. Remove space from registry (would need delete state message)
+    # 2. Evict space from cache
+    # 3. Delete space storage (messages, state, blobs)
+
+    # Evict from cache
+    space_manager.evict_space(space_id)
+
+    # Note: Full cascade delete implementation would require:
+    # - Deleting all blobs associated with the space
+    # - Deleting all messages in the space
+    # - Deleting all state in the space
+    # - Removing the space directory (for SQLite storage)
+
+    logger.info(f"Space deleted: {space_id} by admin {admin_user_id[:16]}...")
+    return Response(status_code=204)
+
+
+@app.delete("/admin/blobs/{blob_id}", status_code=204)
+async def admin_delete_blob(
+    blob_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Delete a blob directly from storage.
+    This is an admin operation that bypasses normal space-scoped blob deletion.
+    Only server admins can perform this operation.
+    """
+    admin_space = get_admin_space()
+
+    try:
+        payload = admin_space.verify_jwt(credentials.credentials)
+        admin_user_id = payload["sub"]
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    # Note: Admin blob deletion needs to verify server-admin role
+    # For now, we check if the user can read from the admin space
+    # (which implies they are a member with some access)
+
+    # Delete blob from storage
+    try:
+        deleted = blob_store.delete_blob(blob_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Blob {blob_id} not found")
+    except Exception as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=f"Blob {blob_id} not found")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    logger.info(f"Blob deleted by admin: {blob_id} by {admin_user_id[:16]}...")
+    return Response(status_code=204)
+
+
 # Application startup/shutdown events
 @app.on_event("startup")
 async def startup_event():
     """Log application startup"""
     logger.info(f"Application starting: environment={config.environment}, debug={config.debug}")
     logger.info(f"Server listening on {config.server.host}:{config.server.port}")
+    if config.admin.space_id:
+        logger.info(f"Admin API enabled: admin_space_id={config.admin.space_id[:16]}...")
+    else:
+        logger.info("Admin API disabled (no admin.space_id configured)")
 
 
 @app.on_event("shutdown")

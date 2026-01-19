@@ -224,3 +224,30 @@ class FilesystemBlobStore(BlobStore):
         except Exception:
             # Error reading or updating metadata
             return False
+
+    def delete_blob(self, blob_id: str) -> bool:
+        """
+        Unconditionally delete a blob and all its references (admin operation).
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            True if blob was deleted, False if blob did not exist
+        """
+        blob_path = self._get_blob_path(blob_id)
+        metadata_path = self._get_metadata_path(blob_id)
+
+        deleted = False
+
+        # Delete blob content if it exists
+        if blob_path.exists():
+            blob_path.unlink()
+            deleted = True
+
+        # Delete metadata if it exists
+        if metadata_path.exists():
+            metadata_path.unlink()
+            deleted = True
+
+        return deleted

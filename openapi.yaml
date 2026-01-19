@@ -41,6 +41,8 @@ tags:
     description: Event-sourced key-value store (auth and temporal state)
   - name: WebSocket
     description: Real-time message streaming
+  - name: Admin
+    description: Server administration endpoints for managing users, spaces, and blobs
 
 paths:
   /spaces/{space_id}/auth/challenge:
@@ -778,6 +780,298 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  # Admin API Endpoints
+  /admin/auth/challenge:
+    post:
+      tags: [Admin]
+      summary: Request admin authentication challenge
+      description: |
+        Convenience endpoint to get an authentication challenge for the admin space.
+        This allows clients to authenticate without knowing the admin space ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [public_key]
+              properties:
+                public_key:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: Typed user identifier (44-char URL-safe base64, Ed25519 public key with header byte)
+      responses:
+        '200':
+          description: Challenge issued successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challenge:
+                    type: string
+                    format: base64
+                    description: Random nonce to sign
+                  expires_at:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds when challenge expires
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /admin/auth/verify:
+    post:
+      tags: [Admin]
+      summary: Verify admin authentication and get JWT
+      description: |
+        Convenience endpoint to verify signed challenge and receive JWT token for the admin space.
+        This allows clients to authenticate without knowing the admin space ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [public_key, signature, challenge]
+              properties:
+                public_key:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: Typed user identifier (44-char URL-safe base64)
+                signature:
+                  type: string
+                  format: base64
+                  description: Signature of challenge
+                challenge:
+                  type: string
+                  format: base64
+                  description: The challenge that was signed
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT bearer token for admin space
+                  expires_at:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds when token expires
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/auth/users/{user_id}:
+    put:
+      tags: [Admin]
+      summary: Create or update server user
+      description: |
+        Create or update a server user in the admin space. This is a convenience wrapper
+        for PUT /spaces/{admin_space_id}/state/auth/users/{user_id}.
+        The request body uses the same format as the state endpoint.
+        Only server admins can perform this operation.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, prev_hash, data, message_hash, signature]
+              properties:
+                type:
+                  type: string
+                  description: Must equal "auth/users/{user_id}" matching the path
+                  example: "auth/users/U_abc123..."
+                prev_hash:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  nullable: true
+                  description: Typed message identifier of previous message in state topic (null for first state message)
+                data:
+                  type: string
+                  format: base64
+                  maxLength: 102400
+                  description: Base64-encoded user data (max 100 KB)
+                message_hash:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: Typed message identifier (SHA256 hash with header, client-computed)
+                signature:
+                  type: string
+                  format: base64
+                  description: Ed25519 signature over message_hash by sender
+      responses:
+        '200':
+          description: User state updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message_hash:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                  server_timestamp:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds
+        '400':
+          description: Invalid message (bad hash, path mismatch, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Chain conflict (prev_hash doesn't match current head)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags: [Admin]
+      summary: Delete server user
+      description: |
+        Delete a server user from the admin space by setting empty data. This is a
+        convenience wrapper for PUT /spaces/{admin_space_id}/state/auth/users/{user_id}
+        with empty data representing deletion. Only server admins can perform this operation.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, prev_hash, data, message_hash, signature]
+              properties:
+                type:
+                  type: string
+                  description: Must equal "auth/users/{user_id}" matching the path
+                  example: "auth/users/U_abc123..."
+                prev_hash:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  nullable: true
+                  description: Typed message identifier of previous message in state topic
+                data:
+                  type: string
+                  description: Must be empty string for deletion
+                  example: ""
+                message_hash:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: Typed message identifier (SHA256 hash with header, client-computed)
+                signature:
+                  type: string
+                  format: base64
+                  description: Ed25519 signature over message_hash by sender
+      responses:
+        '200':
+          description: User deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message_hash:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                  server_timestamp:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds
+        '400':
+          description: Invalid message (bad hash, path mismatch, non-empty data, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Chain conflict (prev_hash doesn't match current head)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /admin/spaces/{space_id}:
+    delete:
+      tags: [Admin]
+      summary: Delete space with cascade cleanup
+      description: |
+        Delete a space and perform cascade cleanup of all associated data including
+        messages, blobs, and state. This is a server-orchestrated operation that
+        requires server admin privileges.
+      parameters:
+        - $ref: '#/components/parameters/SpaceId'
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Space deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /admin/blobs/{blob_id}:
+    delete:
+      tags: [Admin]
+      summary: Delete blob from storage
+      description: |
+        Delete a blob directly from storage. This is an admin operation that bypasses
+        normal space-scoped blob deletion. Only server admins can perform this operation.
+      parameters:
+        - $ref: '#/components/parameters/BlobId'
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Blob deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -808,6 +1102,28 @@ components:
         minLength: 2
         maxLength: 64
       description: Topic identifier (slug format - lowercase alphanumeric, hyphens, underscores)
+
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{44}$'
+        minLength: 44
+        maxLength: 44
+      description: Typed user identifier (44-char URL-safe base64, Ed25519 public key with header byte)
+
+    BlobId:
+      name: blob_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{44}$'
+        minLength: 44
+        maxLength: 44
+      description: Typed blob identifier (SHA256 hash with header)
 
   schemas:
     Message:

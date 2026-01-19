@@ -158,3 +158,19 @@ class BlobStore(ABC):
             Pre-signed URL for download, or None if direct download not supported
         """
         return None
+
+    @abstractmethod
+    def delete_blob(self, blob_id: str) -> bool:
+        """
+        Unconditionally delete a blob and all its references (admin operation).
+
+        This bypasses reference counting and deletes the blob entirely.
+        Use with caution - intended for admin cleanup operations.
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            True if blob was deleted, False if blob did not exist
+        """
+        pass

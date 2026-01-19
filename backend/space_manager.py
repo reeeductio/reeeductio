@@ -3,12 +3,16 @@ Space Manager - Manages Space instances with optional Redis pub/sub
 
 Provides simple space management with optional Redis integration
 for cross-instance WebSocket broadcasting.
+
+Supports a special admin space that uses AdminSpace class for
+additional validation rules (space registration, created_by enforcement).
 """
 
 import threading
 from pathlib import Path
 from typing import Dict, Optional, Callable
 from space import Space
+from admin_space import AdminSpace
 from data_store import DataStore
 from message_store import MessageStore
 from sqlite_data_store import SqliteDataStore
@@ -41,7 +45,8 @@ class SpaceManager:
         blob_store: Optional[BlobStore] = None,
         jwt_secret: Optional[str] = None,
         jwt_algorithm: str = "HS256",
-        jwt_expiry_hours: int = 24
+        jwt_expiry_hours: int = 24,
+        admin_space_id: Optional[str] = None
     ):
         """
         Initialize the space manager.
@@ -56,6 +61,7 @@ class SpaceManager:
             jwt_secret: JWT signing secret (shared across all spaces)
             jwt_algorithm: JWT signing algorithm
             jwt_expiry_hours: JWT token expiry in hours
+            admin_space_id: Optional admin space ID (uses AdminSpace class for this space)
         """
         self.base_storage_dir = base_storage_dir
         self.max_cached_spaces = max_cached_spaces
@@ -63,6 +69,7 @@ class SpaceManager:
         self.data_store_factory = data_store_factory
         self.message_store_factory = message_store_factory
         self.blob_store = blob_store
+        self.admin_space_id = admin_space_id
 
         # JWT configuration (shared across all spaces)
         self.jwt_secret = jwt_secret
@@ -83,11 +90,13 @@ class SpaceManager:
         """
         Get or create a Space instance.
 
+        Returns AdminSpace for the admin space ID, regular Space for others.
+
         Args:
             space_id: Space identifier
 
         Returns:
-            Space instance for the given ID
+            Space instance for the given ID (AdminSpace if admin_space_id matches)
         """
         with self._lock:
             # Check if space exists in cache
@@ -96,7 +105,10 @@ class SpaceManager:
                 logger.debug(f"Space cache hit: {space_id}")
                 return cached_space
 
-            logger.info(f"Creating new space instance: {space_id}")
+            is_admin_space = (self.admin_space_id and space_id == self.admin_space_id)
+            space_type = "admin" if is_admin_space else "regular"
+            logger.info(f"Creating new {space_type} space instance: {space_id}")
+
             # Create stores for this space
             if self.data_store_factory and self.message_store_factory:
                 # Use provided factories (e.g., Firestore - shared global stores)
@@ -111,16 +123,27 @@ class SpaceManager:
                 data_store = SqliteDataStore(str(storage_path / "state.db"))
                 message_store = SqliteMessageStore(str(storage_path / "messages.db"))
 
-            # Create space instance
-            space = Space(
-                space_id=space_id,
-                data_store=data_store,
-                message_store=message_store,
-                blob_store=self.blob_store,
-                jwt_secret=self.jwt_secret,
-                jwt_algorithm=self.jwt_algorithm,
-                jwt_expiry_hours=self.jwt_expiry_hours
-            )
+            # Create space instance - use AdminSpace for admin space
+            if is_admin_space:
+                space = AdminSpace(
+                    space_id=space_id,
+                    data_store=data_store,
+                    message_store=message_store,
+                    blob_store=self.blob_store,
+                    jwt_secret=self.jwt_secret,
+                    jwt_algorithm=self.jwt_algorithm,
+                    jwt_expiry_hours=self.jwt_expiry_hours
+                )
+            else:
+                space = Space(
+                    space_id=space_id,
+                    data_store=data_store,
+                    message_store=message_store,
+                    blob_store=self.blob_store,
+                    jwt_secret=self.jwt_secret,
+                    jwt_algorithm=self.jwt_algorithm,
+                    jwt_expiry_hours=self.jwt_expiry_hours
+                )
 
             # Add to cache (LRU will handle eviction automatically)
             self._spaces.set(space_id, space)

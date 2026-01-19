@@ -389,3 +389,40 @@ class S3BlobStore(BlobStore):
         )
 
         return presigned_url
+
+    def delete_blob(self, blob_id: str) -> bool:
+        """
+        Unconditionally delete a blob and all its references (admin operation).
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            True if blob was deleted, False if blob did not exist
+        """
+        s3_key = self._get_s3_key(blob_id)
+        metadata_key = self._get_metadata_key(blob_id)
+
+        # Check if blob exists
+        blob_exists = False
+        try:
+            self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
+            blob_exists = True
+        except self.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code != "404":
+                raise
+
+        if not blob_exists:
+            return False
+
+        # Delete blob content
+        self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
+
+        # Delete metadata (ignore errors if it doesn't exist)
+        try:
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=metadata_key)
+        except self.ClientError:
+            pass
+
+        return True
