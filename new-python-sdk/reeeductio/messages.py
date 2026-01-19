@@ -15,7 +15,7 @@ from .crypto import (
     sign_data,
     to_message_id,
 )
-from .exceptions import ChainError
+from .exceptions import ChainError, ValidationError
 from .models import Message, MessageCreated
 
 
@@ -187,6 +187,54 @@ async def post_message_async(
         raise ChainError(f"Failed to post message: {e.response.text}") from e
     except Exception as e:
         raise ChainError(f"Failed to post message: {e}") from e
+
+
+async def get_messages_async(
+    client: httpx.AsyncClient,
+    space_id: str,
+    topic_id: str,
+    from_timestamp: int | None = None,
+    to_timestamp: int | None = None,
+    limit: int = 100,
+) -> list[Message]:
+    """
+    Get messages from a topic asynchronously.
+
+    Args:
+        client: Authenticated async httpx client
+        space_id: Typed space identifier
+        topic_id: Topic identifier
+        from_timestamp: Optional start timestamp (milliseconds)
+        to_timestamp: Optional end timestamp (milliseconds)
+        limit: Maximum number of messages to return
+
+    Returns:
+        List of messages
+
+    Raises:
+        ValidationError: If request fails
+    """
+    try:
+        params: dict[str, int] = {"limit": limit}
+        if from_timestamp is not None:
+            params["from"] = from_timestamp
+        if to_timestamp is not None:
+            params["to"] = to_timestamp
+
+        response = await client.get(
+            f"/spaces/{space_id}/topics/{topic_id}/messages",
+            params=params,
+        )
+        response.raise_for_status()
+        data = response.json()
+        message_list = data.get("messages", [])
+        return [Message(**msg) for msg in message_list]
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return []
+        raise ValidationError(f"Failed to get messages: {e.response.text}") from e
+    except Exception as e:
+        raise ValidationError(f"Failed to get messages: {e}") from e
 
 
 def validate_message_chain(messages: list[Message]) -> bool:

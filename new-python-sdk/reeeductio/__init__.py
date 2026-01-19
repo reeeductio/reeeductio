@@ -5,7 +5,7 @@ A clean, modern SDK for end-to-end encrypted messaging with capability-based aut
 """
 
 from .auth import AsyncAuthSession, AuthSession
-from .client import Space
+from .client import AsyncSpace, Space
 from .crypto import (
     Ed25519KeyPair,
     compute_hash,
@@ -52,8 +52,9 @@ from .models import (
 __version__ = "1.0.0"
 
 __all__ = [
-    # Main client
+    # Main clients
     "Space",
+    "AsyncSpace",
     # Authentication
     "AuthSession",
     "AsyncAuthSession",

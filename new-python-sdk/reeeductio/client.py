@@ -8,13 +8,19 @@ authentication, messages, state, blobs, and data.
 from __future__ import annotations
 
 import base64
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
+import websockets
+from websockets.asyncio.client import ClientConnection
 
 from . import blobs, kvdata, messages, state
-from .auth import AuthSession
+from .auth import AsyncAuthSession, AuthSession
 from .crypto import Ed25519KeyPair, decrypt_aes_gcm, encrypt_aes_gcm, derive_key
-from .exceptions import NotFoundError, ValidationError
+from .exceptions import NotFoundError, StreamError, ValidationError
 from .models import BlobCreated, DataEntry, Message, MessageCreated
 
 
@@ -585,6 +591,474 @@ class Space:
         """
         return kvdata.set_data(
             client=self.client,
+            space_id=self.space_id,
+            path=path,
+            data=data,
+            signed_by=self.keypair.to_user_id(),
+            private_key=self.keypair.private_key,
+        )
+
+
+class AsyncSpace:
+    """
+    Async client for interacting with a reeeductio space.
+
+    Provides WebSocket streaming and async HTTP operations.
+
+    Attributes:
+        space_id: Typed space identifier
+        keypair: Ed25519 key pair for authentication and signing
+        symmetric_root: 256-bit root key for HKDF derivation
+        message_key: Derived key for message encryption (32 bytes)
+        blob_key: Derived key for blob encryption (32 bytes)
+        state_key: Derived key for state encryption (32 bytes)
+        data_key: Derived key for data encryption (32 bytes)
+        base_url: Base URL of the reeeductio server
+        auth: Async authentication session manager
+    """
+
+    def __init__(
+        self,
+        space_id: str,
+        keypair: Ed25519KeyPair,
+        symmetric_root: bytes,
+        base_url: str = "http://localhost:8000",
+        auto_authenticate: bool = True,
+    ):
+        """
+        Initialize AsyncSpace client.
+
+        Args:
+            space_id: Typed space identifier (44-char base64)
+            keypair: Ed25519 key pair for authentication and signing
+            symmetric_root: 256-bit (32-byte) root key for HKDF key derivation
+            base_url: Base URL of the reeeductio server
+            auto_authenticate: Whether to authenticate automatically on first request
+
+        Raises:
+            ValueError: If symmetric_root is not exactly 32 bytes
+        """
+        if len(symmetric_root) != 32:
+            raise ValueError(f"symmetric_root must be exactly 32 bytes, got {len(symmetric_root)}")
+
+        self.space_id = space_id
+        self.keypair = keypair
+        self.symmetric_root = symmetric_root
+        self.base_url = base_url
+        self._auto_authenticate = auto_authenticate
+
+        # Derive encryption keys from symmetric_root using HKDF
+        self.message_key = derive_key(symmetric_root, f"message key | {space_id}")
+        self.blob_key = derive_key(symmetric_root, f"blob key | {space_id}")
+        self.data_key = derive_key(symmetric_root, f"data key | {space_id}")
+        self.state_key = derive_key(self.message_key, "topic key | state")
+
+        # Create async authentication session
+        self.auth = AsyncAuthSession(
+            space_id=space_id,
+            public_key_typed=keypair.to_user_id(),
+            private_key=keypair.private_key,
+            base_url=base_url,
+        )
+
+        self._client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit - close client."""
+        await self.close()
+
+    async def close(self):
+        """Close the async HTTP client."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+    async def get_client(self) -> httpx.AsyncClient:
+        """
+        Get authenticated async HTTP client, ensuring valid authentication.
+
+        Returns:
+            Authenticated httpx.AsyncClient
+
+        Raises:
+            AuthenticationError: If authentication fails
+        """
+        if self._auto_authenticate:
+            token = await self.auth.ensure_authenticated()
+        elif self.auth.token:
+            token = self.auth.token
+        else:
+            raise ValueError("Not authenticated. Call authenticate() or set auto_authenticate=True")
+
+        if not self._client:
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        else:
+            self._client.headers["Authorization"] = f"Bearer {token}"
+
+        return self._client
+
+    async def authenticate(self) -> str:
+        """
+        Perform authentication.
+
+        Returns:
+            JWT bearer token
+        """
+        return await self.auth.authenticate()
+
+    # ============================================================
+    # WebSocket Streaming
+    # ============================================================
+
+    def _get_websocket_url(self) -> str:
+        """Convert HTTP base URL to WebSocket URL."""
+        ws_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
+        return f"{ws_url}/spaces/{self.space_id}/stream"
+
+    @asynccontextmanager
+    async def connect(self) -> AsyncIterator[ClientConnection]:
+        """
+        Connect to the space's WebSocket stream.
+
+        Yields a WebSocket connection that receives real-time messages.
+
+        Usage:
+            async with space.connect() as ws:
+                async for message in ws:
+                    data = json.loads(message)
+                    print(data)
+
+        Yields:
+            WebSocket connection
+
+        Raises:
+            StreamError: If connection fails
+            AuthenticationError: If authentication fails
+        """
+        token = await self.auth.ensure_authenticated()
+        ws_url = f"{self._get_websocket_url()}?token={token}"
+
+        try:
+            async with websockets.connect(ws_url) as ws:
+                yield ws
+        except websockets.ConnectionClosedError as e:
+            raise StreamError(f"WebSocket connection closed: {e}") from e
+        except Exception as e:
+            raise StreamError(f"WebSocket error: {e}") from e
+
+    async def stream(self, include_pings: bool = False) -> AsyncIterator[dict[str, Any]]:
+        """
+        Stream messages from the space in real-time.
+
+        This is a convenience method that connects to the WebSocket and
+        yields parsed message dictionaries.
+
+        Args:
+            include_pings: If True, yield server ping messages. Default False.
+
+        Yields:
+            Message dictionaries with keys like:
+            - message_hash: Typed message identifier
+            - topic_id: Topic the message was posted to
+            - type: Message type
+            - data: Base64-encoded message data
+            - sender: Typed user identifier
+            - signature: Base64-encoded signature
+            - server_timestamp: Server timestamp in milliseconds
+
+        Raises:
+            StreamError: If connection fails or is lost
+            AuthenticationError: If authentication fails
+
+        Example:
+            async for msg in space.stream():
+                print(f"New message in {msg['topic_id']}: {msg['message_hash']}")
+        """
+        async with self.connect() as ws:
+            async for raw_message in ws:
+                try:
+                    data = json.loads(raw_message)
+
+                    # Filter out ping messages unless requested
+                    if data.get("type") == "ping" and not include_pings:
+                        continue
+
+                    yield data
+                except json.JSONDecodeError:
+                    # Handle non-JSON messages (like "pong")
+                    continue
+
+    async def stream_messages(self) -> AsyncIterator[Message]:
+        """
+        Stream messages from the space as Message objects.
+
+        Like stream(), but returns parsed Message model instances.
+        Only yields actual messages (not pings or other control messages).
+
+        Yields:
+            Message objects
+
+        Raises:
+            StreamError: If connection fails or is lost
+            AuthenticationError: If authentication fails
+
+        Example:
+            async for msg in space.stream_messages():
+                print(f"Message {msg.message_hash} from {msg.sender}")
+        """
+        async for data in self.stream(include_pings=False):
+            # Only yield if it looks like a message (has message_hash)
+            if "message_hash" in data:
+                yield Message(**data)
+
+    # ============================================================
+    # Async Message Operations
+    # ============================================================
+
+    async def get_messages(
+        self,
+        topic_id: str,
+        from_timestamp: int | None = None,
+        to_timestamp: int | None = None,
+        limit: int = 100,
+    ) -> list[Message]:
+        """
+        Get messages from a topic.
+
+        Args:
+            topic_id: Topic identifier
+            from_timestamp: Optional start timestamp (milliseconds)
+            to_timestamp: Optional end timestamp (milliseconds)
+            limit: Maximum number of messages to return
+
+        Returns:
+            List of messages
+        """
+        client = await self.get_client()
+        return await messages.get_messages_async(
+            client=client,
+            space_id=self.space_id,
+            topic_id=topic_id,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
+            limit=limit,
+        )
+
+    async def post_message(
+        self,
+        topic_id: str,
+        msg_type: str,
+        data: bytes,
+        prev_hash: str | None = None,
+    ) -> MessageCreated:
+        """
+        Post a message to a topic.
+
+        Args:
+            topic_id: Topic identifier
+            msg_type: Message type/category
+            data: Message data (will be base64-encoded)
+            prev_hash: Hash of previous message (optional, fetched if not provided)
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+        """
+        if prev_hash is None:
+            msgs = await self.get_messages(topic_id, limit=1)
+            prev_hash = msgs[0].message_hash if msgs else None
+
+        client = await self.get_client()
+        return await messages.post_message_async(
+            client=client,
+            space_id=self.space_id,
+            topic_id=topic_id,
+            msg_type=msg_type,
+            data=data,
+            prev_hash=prev_hash,
+            sender_public_key_typed=self.keypair.to_user_id(),
+            sender_private_key=self.keypair.private_key,
+        )
+
+    # ============================================================
+    # Async State Operations
+    # ============================================================
+
+    async def get_plaintext_state(self, path: str) -> str:
+        """
+        Get current state value at path.
+
+        Args:
+            path: State path
+
+        Returns:
+            Plaintext state data
+        """
+        client = await self.get_client()
+        message = await state.get_state_async(client, self.space_id, path)
+        return message.data
+
+    async def get_encrypted_state(self, path: str) -> str:
+        """
+        Get encrypted state value at path and decrypt it.
+
+        Args:
+            path: State path
+
+        Returns:
+            Decrypted plaintext string
+        """
+        client = await self.get_client()
+        message = await state.get_state_async(client, self.space_id, path)
+
+        encrypted_b64 = message.data
+        if len(encrypted_b64) == 0:
+            return ""
+
+        encrypted_bytes = base64.b64decode(encrypted_b64)
+        plaintext_bytes = decrypt_aes_gcm(encrypted_bytes, self.state_key)
+        return plaintext_bytes.decode("utf-8")
+
+    async def set_plaintext_state(self, path: str, data: str, prev_hash: str | None = None) -> MessageCreated:
+        """
+        Set plaintext state value at path.
+
+        Args:
+            path: State path
+            data: Plaintext string data to store
+            prev_hash: Previous message hash (optional, fetched if not provided)
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+        """
+        data_bytes = data.encode("utf-8")
+        return await self._set_state(path, data_bytes, prev_hash)
+
+    async def set_encrypted_state(self, path: str, data: str, prev_hash: str | None = None) -> MessageCreated:
+        """
+        Set encrypted state value at path.
+
+        Args:
+            path: State path
+            data: Plaintext string data to encrypt and store
+            prev_hash: Previous message hash (optional, fetched if not provided)
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+        """
+        plaintext_bytes = data.encode("utf-8")
+        encrypted_bytes = encrypt_aes_gcm(plaintext_bytes, self.state_key)
+        encrypted_b64 = base64.b64encode(encrypted_bytes).decode("ascii")
+        data_bytes = encrypted_b64.encode("utf-8")
+        return await self._set_state(path, data_bytes, prev_hash)
+
+    async def _set_state(self, path: str, data: bytes, prev_hash: str | None = None) -> MessageCreated:
+        """Internal: set state value at path."""
+        if prev_hash is None:
+            msgs = await self.get_messages("state", limit=1)
+            prev_hash = msgs[0].message_hash if msgs else None
+
+        client = await self.get_client()
+        return await state.set_state_async(
+            client=client,
+            space_id=self.space_id,
+            path=path,
+            data=data,
+            prev_hash=prev_hash,
+            sender_public_key_typed=self.keypair.to_user_id(),
+            sender_private_key=self.keypair.private_key,
+        )
+
+    async def get_state_history(
+        self,
+        from_timestamp: int | None = None,
+        to_timestamp: int | None = None,
+        limit: int = 100,
+    ) -> list[Message]:
+        """
+        Get all state change messages (event log).
+
+        Args:
+            from_timestamp: Optional start timestamp (milliseconds)
+            to_timestamp: Optional end timestamp (milliseconds)
+            limit: Maximum number of messages to return
+
+        Returns:
+            List of state change messages
+        """
+        client = await self.get_client()
+        return await state.get_state_history_async(
+            client, self.space_id, from_timestamp, to_timestamp, limit
+        )
+
+    # ============================================================
+    # Async Blob Operations
+    # ============================================================
+
+    async def upload_plaintext_blob(self, data: bytes) -> BlobCreated:
+        """Upload plaintext blob."""
+        client = await self.get_client()
+        return await blobs.upload_blob_async(client, self.space_id, data)
+
+    async def encrypt_and_upload_blob(self, data: bytes) -> BlobCreated:
+        """Encrypt and upload a blob."""
+        encrypted_data = encrypt_aes_gcm(data, self.blob_key)
+        client = await self.get_client()
+        return await blobs.upload_blob_async(client, self.space_id, encrypted_data)
+
+    async def download_plaintext_blob(self, blob_id: str) -> bytes:
+        """Download plaintext blob."""
+        client = await self.get_client()
+        return await blobs.download_blob_async(client, self.space_id, blob_id)
+
+    async def download_and_decrypt_blob(self, blob_id: str) -> bytes:
+        """Download and decrypt encrypted blob."""
+        client = await self.get_client()
+        encrypted_data = await blobs.download_blob_async(client, self.space_id, blob_id)
+        return decrypt_aes_gcm(encrypted_data, self.blob_key)
+
+    async def delete_blob(self, blob_id: str) -> None:
+        """Delete blob."""
+        client = await self.get_client()
+        await blobs.delete_blob_async(client, self.space_id, blob_id)
+
+    # ============================================================
+    # Async Key-Value Data Operations
+    # ============================================================
+
+    async def get_plaintext_data(self, path: str) -> bytes:
+        """Get plaintext data value at path."""
+        client = await self.get_client()
+        entry = await kvdata.get_data_async(client, self.space_id, path)
+        return base64.b64decode(entry.data)
+
+    async def get_encrypted_data(self, path: str) -> bytes:
+        """Get encrypted data value at path and decrypt it."""
+        client = await self.get_client()
+        entry = await kvdata.get_data_async(client, self.space_id, path)
+        encrypted_bytes = base64.b64decode(entry.data)
+        return decrypt_aes_gcm(encrypted_bytes, self.data_key)
+
+    async def set_plaintext_data(self, path: str, data: bytes) -> int:
+        """Set plaintext data value at path."""
+        return await self._set_data(path, data)
+
+    async def set_encrypted_data(self, path: str, data: bytes) -> int:
+        """Set encrypted data value at path."""
+        encrypted_bytes = encrypt_aes_gcm(data, self.data_key)
+        return await self._set_data(path, encrypted_bytes)
+
+    async def _set_data(self, path: str, data: bytes) -> int:
+        """Internal: set data value at path."""
+        client = await self.get_client()
+        return await kvdata.set_data_async(
+            client=client,
             space_id=self.space_id,
             path=path,
             data=data,
