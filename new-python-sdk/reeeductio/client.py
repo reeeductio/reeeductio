@@ -599,6 +599,454 @@ class Space:
         )
 
 
+class AdminClient:
+    """
+    Admin client for authenticating to the admin space and getting its ID.
+
+    This client provides a simple way to authenticate against the admin space
+    without knowing its ID in advance. Once authenticated, use get_space_id()
+    to obtain the admin space ID, then use a regular Space client to perform
+    admin operations.
+
+    Example:
+        # Authenticate and get admin space ID
+        admin = AdminClient(keypair, base_url)
+        admin_space_id = admin.get_space_id()
+
+        # Use regular Space client for admin operations
+        space = Space(
+            space_id=admin_space_id,
+            keypair=keypair,
+            symmetric_root=admin_symmetric_root,
+            base_url=base_url,
+        )
+
+        # Perform admin operations using standard state API
+        space.set_plaintext_state(f"auth/users/{new_user_id}", user_data)
+
+    Attributes:
+        keypair: Ed25519 key pair for authentication and signing
+        base_url: Base URL of the reeeductio server
+    """
+
+    def __init__(
+        self,
+        keypair: Ed25519KeyPair,
+        base_url: str = "http://localhost:8000",
+        auto_authenticate: bool = True,
+    ):
+        """
+        Initialize AdminClient.
+
+        Args:
+            keypair: Ed25519 key pair for authentication and signing
+            base_url: Base URL of the reeeductio server
+            auto_authenticate: Whether to authenticate automatically on first request
+        """
+        self.keypair = keypair
+        self.base_url = base_url
+        self._auto_authenticate = auto_authenticate
+
+        self._token: str | None = None
+        self._token_expires_at: int | None = None
+        self._client: httpx.Client | None = None
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - close client."""
+        self.close()
+
+    def close(self):
+        """Close the HTTP client."""
+        if self._client:
+            self._client.close()
+            self._client = None
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Check if session has a valid token."""
+        from datetime import datetime, timezone
+
+        if not self._token:
+            return False
+
+        if self._token_expires_at:
+            # Check if token is expired (with 60s buffer)
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            return now_ms < (self._token_expires_at - 60_000)
+
+        return True
+
+    @property
+    def token(self) -> str | None:
+        """Get the current JWT token, if authenticated."""
+        return self._token
+
+    def authenticate(self) -> str:
+        """
+        Perform challenge-response authentication against the admin space.
+
+        Returns:
+            JWT bearer token
+
+        Raises:
+            AuthenticationError: If authentication fails
+        """
+        from .crypto import decode_base64, sign_data
+        from .exceptions import AuthenticationError
+
+        with httpx.Client(base_url=self.base_url) as client:
+            # Step 1: Request challenge from admin endpoint
+            try:
+                response = client.post(
+                    "/admin/auth/challenge",
+                    json={"public_key": self.keypair.to_user_id()},
+                )
+                response.raise_for_status()
+                challenge_data = response.json()
+            except httpx.HTTPStatusError as e:
+                raise AuthenticationError(f"Failed to get admin challenge: {e.response.text}") from e
+            except Exception as e:
+                raise AuthenticationError(f"Failed to get admin challenge: {e}") from e
+
+            # Step 2: Sign the challenge
+            challenge_bytes = decode_base64(challenge_data["challenge"])
+            signature = sign_data(challenge_bytes, self.keypair.private_key)
+
+            # Step 3: Verify signature and get token
+            try:
+                response = client.post(
+                    "/admin/auth/verify",
+                    json={
+                        "public_key": self.keypair.to_user_id(),
+                        "signature": signature.hex(),
+                        "challenge": challenge_data["challenge"],
+                    },
+                )
+                response.raise_for_status()
+                token_data = response.json()
+            except httpx.HTTPStatusError as e:
+                raise AuthenticationError(f"Admin authentication failed: {e.response.text}") from e
+            except Exception as e:
+                raise AuthenticationError(f"Admin authentication failed: {e}") from e
+
+            # Store token and expiration
+            self._token = token_data["token"]
+            self._token_expires_at = token_data["expires_at"]
+
+            return self._token
+
+    def _ensure_authenticated(self) -> str:
+        """
+        Ensure we have a valid token.
+
+        Returns:
+            Valid JWT bearer token
+
+        Raises:
+            AuthenticationError: If authentication fails
+        """
+        if self.is_authenticated and self._token is not None:
+            return self._token
+
+        return self.authenticate()
+
+    @property
+    def client(self) -> httpx.Client:
+        """
+        Get authenticated HTTP client.
+
+        Returns:
+            Authenticated httpx.Client
+
+        Raises:
+            AuthenticationError: If authentication fails
+        """
+        if self._auto_authenticate:
+            token = self._ensure_authenticated()
+        elif self._token:
+            token = self._token
+        else:
+            raise ValueError("Not authenticated. Call authenticate() or set auto_authenticate=True")
+
+        if not self._client:
+            self._client = httpx.Client(
+                base_url=self.base_url,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        else:
+            self._client.headers["Authorization"] = f"Bearer {token}"
+
+        return self._client
+
+    def get_space_id(self) -> str:
+        """
+        Get the admin space ID.
+
+        This allows you to use a regular Space client with the admin space ID
+        to perform admin operations through the standard state and message endpoints.
+
+        Returns:
+            The admin space ID (44-char base64)
+
+        Raises:
+            AuthenticationError: If not authenticated or token is invalid
+        """
+        from .exceptions import AuthenticationError
+
+        try:
+            response = self.client.get("/admin/space")
+            response.raise_for_status()
+            return response.json()["space_id"]
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                raise AuthenticationError(f"Authentication required: {e.response.text}") from e
+            raise AuthenticationError(f"Failed to get admin space ID: {e.response.text}") from e
+
+    def delete_blob(self, blob_id: str) -> None:
+        """
+        Delete a blob directly from the server's blob storage.
+
+        This is an admin operation that bypasses normal space-scoped blob deletion,
+        allowing removal of orphaned or problematic blobs. Blobs are stored separately
+        from space state and cannot be deleted through the regular state API.
+
+        Args:
+            blob_id: Typed blob identifier (44-char base64)
+
+        Raises:
+            NotFoundError: If blob not found
+            AuthorizationError: If caller lacks admin permissions
+        """
+        from .exceptions import AuthorizationError, NotFoundError, ValidationError
+
+        try:
+            response = self.client.delete(f"/admin/blobs/{blob_id}")
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise NotFoundError(f"Blob not found: {blob_id}") from e
+            elif e.response.status_code == 403:
+                raise AuthorizationError(f"Permission denied: {e.response.text}") from e
+            elif e.response.status_code == 401:
+                raise AuthorizationError(f"Authentication required: {e.response.text}") from e
+            raise ValidationError(f"Failed to delete blob: {e.response.text}") from e
+
+
+class AsyncAdminClient:
+    """
+    Async admin client for authenticating to the admin space and getting its ID.
+
+    This client provides an async way to authenticate against the admin space
+    without knowing its ID in advance. Once authenticated, use get_space_id()
+    to obtain the admin space ID, then use a regular AsyncSpace client to perform
+    admin operations.
+
+    Attributes:
+        keypair: Ed25519 key pair for authentication and signing
+        base_url: Base URL of the reeeductio server
+    """
+
+    def __init__(
+        self,
+        keypair: Ed25519KeyPair,
+        base_url: str = "http://localhost:8000",
+        auto_authenticate: bool = True,
+    ):
+        """
+        Initialize AsyncAdminClient.
+
+        Args:
+            keypair: Ed25519 key pair for authentication and signing
+            base_url: Base URL of the reeeductio server
+            auto_authenticate: Whether to authenticate automatically on first request
+        """
+        self.keypair = keypair
+        self.base_url = base_url
+        self._auto_authenticate = auto_authenticate
+
+        self._token: str | None = None
+        self._token_expires_at: int | None = None
+        self._client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit - close client."""
+        await self.close()
+
+    async def close(self):
+        """Close the async HTTP client."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Check if session has a valid token."""
+        from datetime import datetime, timezone
+
+        if not self._token:
+            return False
+
+        if self._token_expires_at:
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            return now_ms < (self._token_expires_at - 60_000)
+
+        return True
+
+    @property
+    def token(self) -> str | None:
+        """Get the current JWT token, if authenticated."""
+        return self._token
+
+    async def authenticate(self) -> str:
+        """
+        Perform challenge-response authentication against the admin space.
+
+        Returns:
+            JWT bearer token
+
+        Raises:
+            AuthenticationError: If authentication fails
+        """
+        from .crypto import decode_base64, sign_data
+        from .exceptions import AuthenticationError
+
+        async with httpx.AsyncClient(base_url=self.base_url) as client:
+            # Step 1: Request challenge
+            try:
+                response = await client.post(
+                    "/admin/auth/challenge",
+                    json={"public_key": self.keypair.to_user_id()},
+                )
+                response.raise_for_status()
+                challenge_data = response.json()
+            except httpx.HTTPStatusError as e:
+                raise AuthenticationError(f"Failed to get admin challenge: {e.response.text}") from e
+            except Exception as e:
+                raise AuthenticationError(f"Failed to get admin challenge: {e}") from e
+
+            # Step 2: Sign the challenge
+            challenge_bytes = decode_base64(challenge_data["challenge"])
+            signature = sign_data(challenge_bytes, self.keypair.private_key)
+
+            # Step 3: Verify signature and get token
+            try:
+                response = await client.post(
+                    "/admin/auth/verify",
+                    json={
+                        "public_key": self.keypair.to_user_id(),
+                        "signature": signature.hex(),
+                        "challenge": challenge_data["challenge"],
+                    },
+                )
+                response.raise_for_status()
+                token_data = response.json()
+            except httpx.HTTPStatusError as e:
+                raise AuthenticationError(f"Admin authentication failed: {e.response.text}") from e
+            except Exception as e:
+                raise AuthenticationError(f"Admin authentication failed: {e}") from e
+
+            self._token = token_data["token"]
+            self._token_expires_at = token_data["expires_at"]
+
+            return self._token
+
+    async def _ensure_authenticated(self) -> str:
+        """Ensure we have a valid token."""
+        if self.is_authenticated and self._token is not None:
+            return self._token
+
+        return await self.authenticate()
+
+    async def get_client(self) -> httpx.AsyncClient:
+        """
+        Get authenticated async HTTP client.
+
+        Returns:
+            Authenticated httpx.AsyncClient
+
+        Raises:
+            AuthenticationError: If authentication fails
+        """
+        if self._auto_authenticate:
+            token = await self._ensure_authenticated()
+        elif self._token:
+            token = self._token
+        else:
+            raise ValueError("Not authenticated. Call authenticate() or set auto_authenticate=True")
+
+        if not self._client:
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        else:
+            self._client.headers["Authorization"] = f"Bearer {token}"
+
+        return self._client
+
+    async def get_space_id(self) -> str:
+        """
+        Get the admin space ID.
+
+        This allows you to use a regular AsyncSpace client with the admin space ID
+        to perform admin operations through the standard state and message endpoints.
+
+        Returns:
+            The admin space ID (44-char base64)
+
+        Raises:
+            AuthenticationError: If not authenticated or token is invalid
+        """
+        from .exceptions import AuthenticationError
+
+        client = await self.get_client()
+        try:
+            response = await client.get("/admin/space")
+            response.raise_for_status()
+            return response.json()["space_id"]
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                raise AuthenticationError(f"Authentication required: {e.response.text}") from e
+            raise AuthenticationError(f"Failed to get admin space ID: {e.response.text}") from e
+
+    async def delete_blob(self, blob_id: str) -> None:
+        """
+        Delete a blob directly from the server's blob storage.
+
+        This is an admin operation that bypasses normal space-scoped blob deletion,
+        allowing removal of orphaned or problematic blobs.
+
+        Args:
+            blob_id: Typed blob identifier (44-char base64)
+
+        Raises:
+            NotFoundError: If blob not found
+            AuthorizationError: If caller lacks admin permissions
+        """
+        from .exceptions import AuthorizationError, NotFoundError, ValidationError
+
+        client = await self.get_client()
+        try:
+            response = await client.delete(f"/admin/blobs/{blob_id}")
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise NotFoundError(f"Blob not found: {blob_id}") from e
+            elif e.response.status_code == 403:
+                raise AuthorizationError(f"Permission denied: {e.response.text}") from e
+            elif e.response.status_code == 401:
+                raise AuthorizationError(f"Authentication required: {e.response.text}") from e
+            raise ValidationError(f"Failed to delete blob: {e.response.text}") from e
+
+
 class AsyncSpace:
     """
     Async client for interacting with a reeeductio space.

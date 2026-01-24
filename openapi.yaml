@@ -868,196 +868,49 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /admin/auth/users/{user_id}:
-    put:
+  /admin/space:
+    get:
       tags: [Admin]
-      summary: Create or update server user
+      summary: Get the admin space ID
       description: |
-        Create or update a server user in the admin space. This is a convenience wrapper
-        for PUT /spaces/{admin_space_id}/state/auth/users/{user_id}.
-        The request body uses the same format as the state endpoint.
-        Only server admins can perform this operation.
-      parameters:
-        - $ref: '#/components/parameters/UserId'
+        Returns the admin space ID. This allows clients to use the standard
+        /spaces/{space_id}/* endpoints for admin operations like managing users,
+        spaces, and performing other administrative tasks.
+
+        After obtaining the admin space ID, clients should use the regular Space
+        client with this ID to perform admin operations through the standard
+        state and message endpoints.
       security:
         - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [type, prev_hash, data, message_hash, signature]
-              properties:
-                type:
-                  type: string
-                  description: Must equal "auth/users/{user_id}" matching the path
-                  example: "auth/users/U_abc123..."
-                prev_hash:
-                  type: string
-                  pattern: '^[A-Za-z0-9_-]{44}$'
-                  minLength: 44
-                  maxLength: 44
-                  nullable: true
-                  description: Typed message identifier of previous message in state topic (null for first state message)
-                data:
-                  type: string
-                  format: base64
-                  maxLength: 102400
-                  description: Base64-encoded user data (max 100 KB)
-                message_hash:
-                  type: string
-                  pattern: '^[A-Za-z0-9_-]{44}$'
-                  minLength: 44
-                  maxLength: 44
-                  description: Typed message identifier (SHA256 hash with header, client-computed)
-                signature:
-                  type: string
-                  format: base64
-                  description: Ed25519 signature over message_hash by sender
       responses:
         '200':
-          description: User state updated successfully
+          description: Admin space ID retrieved successfully
           content:
             application/json:
               schema:
                 type: object
+                required: [space_id]
                 properties:
-                  message_hash:
+                  space_id:
                     type: string
                     pattern: '^[A-Za-z0-9_-]{44}$'
                     minLength: 44
                     maxLength: 44
-                  server_timestamp:
-                    type: integer
-                    format: int64
-                    description: Unix timestamp in milliseconds
-        '400':
-          description: Invalid message (bad hash, path mismatch, etc.)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+                    description: Typed admin space identifier
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          description: Chain conflict (prev_hash doesn't match current head)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-    delete:
-      tags: [Admin]
-      summary: Delete server user
-      description: |
-        Delete a server user from the admin space by setting empty data. This is a
-        convenience wrapper for PUT /spaces/{admin_space_id}/state/auth/users/{user_id}
-        with empty data representing deletion. Only server admins can perform this operation.
-      parameters:
-        - $ref: '#/components/parameters/UserId'
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [type, prev_hash, data, message_hash, signature]
-              properties:
-                type:
-                  type: string
-                  description: Must equal "auth/users/{user_id}" matching the path
-                  example: "auth/users/U_abc123..."
-                prev_hash:
-                  type: string
-                  pattern: '^[A-Za-z0-9_-]{44}$'
-                  minLength: 44
-                  maxLength: 44
-                  nullable: true
-                  description: Typed message identifier of previous message in state topic
-                data:
-                  type: string
-                  description: Must be empty string for deletion
-                  example: ""
-                message_hash:
-                  type: string
-                  pattern: '^[A-Za-z0-9_-]{44}$'
-                  minLength: 44
-                  maxLength: 44
-                  description: Typed message identifier (SHA256 hash with header, client-computed)
-                signature:
-                  type: string
-                  format: base64
-                  description: Ed25519 signature over message_hash by sender
-      responses:
-        '200':
-          description: User deleted successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message_hash:
-                    type: string
-                    pattern: '^[A-Za-z0-9_-]{44}$'
-                    minLength: 44
-                    maxLength: 44
-                  server_timestamp:
-                    type: integer
-                    format: int64
-                    description: Unix timestamp in milliseconds
-        '400':
-          description: Invalid message (bad hash, path mismatch, non-empty data, etc.)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          description: Chain conflict (prev_hash doesn't match current head)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /admin/spaces/{space_id}:
-    delete:
-      tags: [Admin]
-      summary: Delete space with cascade cleanup
-      description: |
-        Delete a space and perform cascade cleanup of all associated data including
-        messages, blobs, and state. This is a server-orchestrated operation that
-        requires server admin privileges.
-      parameters:
-        - $ref: '#/components/parameters/SpaceId'
-      security:
-        - BearerAuth: []
-      responses:
-        '204':
-          description: Space deleted successfully
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
 
   /admin/blobs/{blob_id}:
     delete:
       tags: [Admin]
       summary: Delete blob from storage
       description: |
-        Delete a blob directly from storage. This is an admin operation that bypasses
-        normal space-scoped blob deletion. Only server admins can perform this operation.
+        Delete a blob directly from the server's blob storage. This is an admin
+        operation that bypasses normal space-scoped blob deletion, allowing
+        server admins to remove orphaned or problematic blobs.
+
+        This endpoint is necessary because blobs are stored separately from
+        space state and cannot be deleted through the regular state API.
       parameters:
         - $ref: '#/components/parameters/BlobId'
       security:

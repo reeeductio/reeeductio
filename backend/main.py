@@ -809,136 +809,27 @@ async def admin_auth_verify(request: VerifyRequest):
     return admin_space.create_jwt(request.public_key)
 
 
-@app.put("/admin/auth/users/{user_id}")
-async def admin_create_or_update_user(
-    user_id: str,
-    msg: MessagePost,
+@app.get("/admin/space")
+async def admin_get_space_id(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """
-    Create or update a server user in the admin space.
-    Wrapper for PUT /spaces/{admin_space_id}/state/auth/users/{user_id}.
-    Only server admins can perform this operation.
-    """
-    admin_space = get_admin_space()
-    path = f"auth/users/{user_id}"
+    Get the admin space ID.
 
-    if path != msg.type:
-        raise HTTPException(400, detail="Path mismatch: msg.type must equal auth/users/{user_id}")
-
-    try:
-        server_timestamp = await admin_space.set_state(
-            path=path,
-            prev_hash=msg.prev_hash,
-            data=msg.data,
-            message_hash=msg.message_hash,
-            signature=msg.signature,
-            token=credentials.credentials
-        )
-        return {"message_hash": msg.message_hash, "server_timestamp": server_timestamp}
-    except ValueError as e:
-        error_msg = str(e)
-        if "permission" in error_msg.lower():
-            raise HTTPException(status_code=403, detail=error_msg)
-        elif "conflict" in error_msg.lower():
-            raise HTTPException(status_code=409, detail=error_msg)
-        elif "required" in error_msg.lower() or "must be" in error_msg.lower() or "invalid" in error_msg.lower() or "signature" in error_msg.lower():
-            raise HTTPException(status_code=400, detail=error_msg)
-        else:
-            raise HTTPException(status_code=401, detail=error_msg)
-
-
-@app.delete("/admin/auth/users/{user_id}")
-async def admin_delete_user(
-    user_id: str,
-    msg: MessagePost,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """
-    Delete a server user from the admin space.
-    Wrapper for PUT /spaces/{admin_space_id}/state/auth/users/{user_id} with empty data.
-    Only server admins can perform this operation.
-    """
-    admin_space = get_admin_space()
-    path = f"auth/users/{user_id}"
-
-    if path != msg.type:
-        raise HTTPException(400, detail="Path mismatch: msg.type must equal auth/users/{user_id}")
-
-    # Validate that data is empty (deletion marker)
-    if msg.data != "":
-        raise HTTPException(400, detail="Delete operation requires empty data field")
-
-    try:
-        server_timestamp = await admin_space.set_state(
-            path=path,
-            prev_hash=msg.prev_hash,
-            data=msg.data,
-            message_hash=msg.message_hash,
-            signature=msg.signature,
-            token=credentials.credentials
-        )
-        return {"message_hash": msg.message_hash, "server_timestamp": server_timestamp}
-    except ValueError as e:
-        error_msg = str(e)
-        if "permission" in error_msg.lower():
-            raise HTTPException(status_code=403, detail=error_msg)
-        elif "conflict" in error_msg.lower():
-            raise HTTPException(status_code=409, detail=error_msg)
-        elif "not found" in error_msg.lower():
-            raise HTTPException(status_code=404, detail=error_msg)
-        elif "required" in error_msg.lower() or "must be" in error_msg.lower() or "invalid" in error_msg.lower() or "signature" in error_msg.lower():
-            raise HTTPException(status_code=400, detail=error_msg)
-        else:
-            raise HTTPException(status_code=401, detail=error_msg)
-
-
-@app.delete("/admin/spaces/{space_id}", status_code=204)
-async def admin_delete_space(
-    space_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """
-    Delete a space with cascade cleanup.
-    This removes the space registry entry and all associated data.
-    Only server admins can perform this operation.
+    This allows clients to use the standard /spaces/{space_id}/* endpoints
+    for admin operations. After obtaining the admin space ID, clients should
+    use a regular Space client with this ID to perform admin operations
+    through the standard state and message endpoints.
     """
     admin_space = get_admin_space()
 
+    # Verify the JWT is valid for the admin space
     try:
-        payload = admin_space.verify_jwt(credentials.credentials)
-        admin_user_id = payload["sub"]
+        admin_space.verify_jwt(credentials.credentials)
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-    # Check if space exists in registry
-    try:
-        admin_space.get_state(f"spaces/{space_id}", credentials.credentials)
-    except ValueError as e:
-        error_msg = str(e)
-        if "not found" in error_msg.lower():
-            raise HTTPException(status_code=404, detail=f"Space {space_id} not found in registry")
-        elif "permission" in error_msg.lower():
-            raise HTTPException(status_code=403, detail=error_msg)
-        else:
-            raise HTTPException(status_code=401, detail=error_msg)
-
-    # Cascade cleanup:
-    # 1. Remove space from registry (would need delete state message)
-    # 2. Evict space from cache
-    # 3. Delete space storage (messages, state, blobs)
-
-    # Evict from cache
-    space_manager.evict_space(space_id)
-
-    # Note: Full cascade delete implementation would require:
-    # - Deleting all blobs associated with the space
-    # - Deleting all messages in the space
-    # - Deleting all state in the space
-    # - Removing the space directory (for SQLite storage)
-
-    logger.info(f"Space deleted: {space_id} by admin {admin_user_id[:16]}...")
-    return Response(status_code=204)
+    return {"space_id": config.admin.space_id}
 
 
 @app.delete("/admin/blobs/{blob_id}", status_code=204)
@@ -948,8 +839,9 @@ async def admin_delete_blob(
 ):
     """
     Delete a blob directly from storage.
-    This is an admin operation that bypasses normal space-scoped blob deletion.
-    Only server admins can perform this operation.
+
+    This is an admin operation that bypasses normal space-scoped blob deletion,
+    allowing server admins to remove orphaned or problematic blobs.
     """
     admin_space = get_admin_space()
 
@@ -958,10 +850,6 @@ async def admin_delete_blob(
         admin_user_id = payload["sub"]
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
-
-    # Note: Admin blob deletion needs to verify server-admin role
-    # For now, we check if the user can read from the admin space
-    # (which implies they are a member with some access)
 
     # Delete blob from storage
     try:
