@@ -119,6 +119,44 @@ class SqliteBlobStore(BlobStore):
                 )
             raise
 
+    def add_blob_reference(self, blob_id: str, space_id: str, uploaded_by: str) -> None:
+        """
+        Add a reference to a blob without providing content data.
+
+        Note: SqliteBlobStore doesn't support presigned URLs, so this method
+        is provided for interface consistency but shouldn't typically be called.
+        The foreign key constraint requires the blob content to exist first.
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+            space_id: ID of the space this blob belongs to
+            uploaded_by: Public key of the user who uploaded this blob
+
+        Raises:
+            ValueError: If blob_id is invalid or not a BLOB type
+            FileExistsError: If this exact reference already exists
+        """
+        # Validate blob_id format and type
+        self._validate_blob_id(blob_id)
+
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Add the reference (will fail if blob doesn't exist due to FK,
+                # or if duplicate reference)
+                cursor.execute("""
+                    INSERT INTO blob_references
+                    (blob_id, space_id, uploaded_by, uploaded_at)
+                    VALUES (?, ?, ?, ?)
+                """, (blob_id, space_id, uploaded_by, int(time.time() * 1000)))
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                raise FileExistsError(
+                    f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
+                )
+            raise
+
     def get_blob(self, blob_id: str) -> Optional[bytes]:
         """Retrieve a blob from the database"""
         with self.get_connection() as conn:

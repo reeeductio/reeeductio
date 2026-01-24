@@ -19,12 +19,16 @@ database:
   project_id: e2e-test-project
   database_id: "(default)"
 
-# Use filesystem for blob storage in e2e tests
-# This avoids presigned URL hostname issues when testing from host machine
-# For production-like testing with MinIO, run tests from within Docker
+# Use S3 (MinIO) for blob storage in e2e tests
 blob_store:
-  type: filesystem
-  path: /app/backend/backend/blobs
+  type: s3
+  bucket_name: e2e-test-bucket
+  endpoint_url: http://minio:9000
+  public_endpoint_url: http://localhost:9000
+  access_key_id: minioadmin
+  secret_access_key: minioadmin
+  region_name: us-east-1
+  presigned_url_expiration: 3600
 
 logging:
   level: DEBUG

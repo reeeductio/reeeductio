@@ -134,6 +134,27 @@ class BlobStore(ABC):
         """
         pass
 
+    def add_blob_reference(self, blob_id: str, space_id: str, uploaded_by: str) -> None:
+        """
+        Add a reference to a blob without providing content data.
+
+        Used for presigned URL uploads where the client uploads directly to S3.
+        Creates metadata with the reference, but doesn't store blob content
+        (content will be uploaded directly by the client).
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+            space_id: ID of the space this blob belongs to
+            uploaded_by: Public key of the user who uploaded this blob
+
+        Raises:
+            ValueError: If blob_id is invalid or not a BLOB type
+            FileExistsError: If this exact reference already exists
+        """
+        raise NotImplementedError(
+            "add_blob_reference not implemented for this blob store"
+        )
+
     def get_upload_url(self, blob_id: str, max_size: Optional[int] = None) -> Optional[str]:
         """
         Get a pre-signed URL for uploading a blob (optional, for S3-compatible backends)

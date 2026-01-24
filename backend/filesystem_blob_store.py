@@ -119,6 +119,61 @@ class FilesystemBlobStore(BlobStore):
                 temp_meta_path.unlink()
             raise
 
+    def add_blob_reference(self, blob_id: str, space_id: str, uploaded_by: str) -> None:
+        """
+        Add a reference to a blob without providing content data.
+
+        Note: FilesystemBlobStore doesn't support presigned URLs, so this method
+        is provided for interface consistency but shouldn't typically be called.
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+            space_id: ID of the space this blob belongs to
+            uploaded_by: Public key of the user who uploaded this blob
+
+        Raises:
+            ValueError: If blob_id is invalid or not a BLOB type
+            FileExistsError: If this exact reference already exists
+        """
+        # Validate blob_id format and type
+        self._validate_blob_id(blob_id)
+
+        metadata_path = self._get_metadata_path(blob_id)
+
+        # Read existing metadata or initialize empty
+        if metadata_path.exists():
+            try:
+                metadata_json = metadata_path.read_text()
+                metadata = json.loads(metadata_json)
+            except Exception:
+                metadata = {"references": {}}
+        else:
+            metadata = {"references": {}}
+
+        # Check if this exact reference already exists
+        ref_key = self._get_reference_key(space_id, uploaded_by)
+        if ref_key in metadata["references"]:
+            raise FileExistsError(
+                f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
+            )
+
+        # Add the new reference
+        metadata["references"][ref_key] = {
+            "space_id": space_id,
+            "uploaded_by": uploaded_by,
+            "uploaded_at": int(time.time() * 1000)
+        }
+
+        # Write metadata atomically
+        temp_meta_path = Path(str(metadata_path) + '.tmp')
+        try:
+            temp_meta_path.write_text(json.dumps(metadata))
+            temp_meta_path.replace(metadata_path)
+        except Exception:
+            if temp_meta_path.exists():
+                temp_meta_path.unlink()
+            raise
+
     def get_blob(self, blob_id: str) -> Optional[bytes]:
         """
         Retrieve a blob from the filesystem

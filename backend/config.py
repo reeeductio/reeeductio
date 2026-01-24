@@ -33,6 +33,12 @@ class S3BlobConfig(BaseModel):
         default=None,
         description="Custom S3 endpoint URL (for MinIO, etc)"
     )
+    public_endpoint_url: Optional[str] = Field(
+        default=None,
+        description="Public endpoint URL for presigned URLs (defaults to endpoint_url). "
+                    "Use this when the internal endpoint differs from the public one, "
+                    "e.g., 'http://localhost:9000' when MinIO runs in Docker as 'minio:9000'"
+    )
     access_key_id: Optional[str] = Field(
         default=None,
         description="S3 access key ID"

@@ -318,11 +318,19 @@ class TestBlobs:
                 # Fix MinIO URL for local testing
                 upload_url = self._fix_minio_url(upload_url)
 
+                # The presigned URL requires a SHA256 checksum header that matches the blob_id
+                # Extract the checksum from the URL or compute it from the content
+                import hashlib
+                checksum_sha256 = base64.b64encode(hashlib.sha256(blob_content).digest()).decode('ascii')
+
                 # Upload directly to MinIO using pre-signed URL
                 upload_response = httpx.put(
                     upload_url,
                     content=blob_content,
-                    headers={"Content-Type": "application/octet-stream"}
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "x-amz-checksum-sha256": checksum_sha256
+                    }
                 )
                 assert upload_response.status_code in (200, 201), f"MinIO upload failed: {upload_response.text}"
             else:

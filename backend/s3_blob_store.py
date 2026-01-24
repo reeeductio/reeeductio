@@ -35,6 +35,8 @@ class S3BlobStore(BlobStore):
         Args:
             bucket_name: S3 bucket name for blob storage
             endpoint_url: Custom S3 endpoint (for MinIO, etc.). None for AWS S3
+            public_endpoint_url: Public endpoint for presigned URLs. Defaults to endpoint_url.
+                                 Use when internal endpoint differs from public (e.g., Docker).
             access_key_id: AWS access key ID (or None to use environment/IAM)
             secret_access_key: AWS secret access key (or None to use environment/IAM)
             region_name: AWS region name (default: us-east-1)
@@ -61,6 +63,17 @@ class S3BlobStore(BlobStore):
             )
         else:
             self.s3_client = session.client("s3", region_name=config.region_name)
+
+        # Create separate client for presigned URLs if public endpoint differs
+        public_endpoint = getattr(config, 'public_endpoint_url', None) or config.endpoint_url
+        if public_endpoint and public_endpoint != config.endpoint_url:
+            self.presigned_client = session.client(
+                "s3",
+                region_name=config.region_name,
+                endpoint_url=public_endpoint
+            )
+        else:
+            self.presigned_client = self.s3_client
 
         # Ensure bucket exists
         self._ensure_bucket_exists()
@@ -171,6 +184,65 @@ class S3BlobStore(BlobStore):
             )
 
         # Always upload updated metadata
+        self.s3_client.put_object(
+            Bucket=self.bucket_name,
+            Key=metadata_key,
+            Body=json.dumps(metadata),
+            ContentType="application/json"
+        )
+
+    def add_blob_reference(self, blob_id: str, space_id: str, uploaded_by: str) -> None:
+        """
+        Add a reference to a blob without providing content data.
+
+        Used for presigned URL uploads where the client uploads directly to S3.
+        Creates metadata with the reference. The actual blob content will be
+        uploaded by the client using the presigned URL.
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+            space_id: ID of the space this blob belongs to
+            uploaded_by: Public key of the user who uploaded this blob
+
+        Raises:
+            ValueError: If blob_id is invalid or not a BLOB type
+            FileExistsError: If this exact reference already exists
+        """
+        # Validate blob_id format and type
+        self._validate_blob_id(blob_id)
+
+        metadata_key = self._get_metadata_key(blob_id)
+
+        # Read existing metadata or initialize empty
+        metadata = {"references": {}}
+        try:
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=metadata_key
+            )
+            metadata_json = response["Body"].read().decode('utf-8')
+            metadata = json.loads(metadata_json)
+        except self.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code not in ("NoSuchKey", "404"):
+                raise
+            # Metadata doesn't exist yet, use empty default
+
+        # Check if this exact reference already exists
+        ref_key = self._get_reference_key(space_id, uploaded_by)
+        if ref_key in metadata.get("references", {}):
+            raise FileExistsError(
+                f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
+            )
+
+        # Add the new reference
+        metadata["references"][ref_key] = {
+            "space_id": space_id,
+            "uploaded_by": uploaded_by,
+            "uploaded_at": int(time.time() * 1000)
+        }
+
+        # Upload updated metadata
         self.s3_client.put_object(
             Bucket=self.bucket_name,
             Key=metadata_key,
@@ -349,7 +421,8 @@ class S3BlobStore(BlobStore):
         # 4. Server-side validation when metadata is added via add_blob()
 
         # Generate pre-signed URL for PUT with checksum enforcement
-        presigned_url = self.s3_client.generate_presigned_url(
+        # Use presigned_client which may have a different (public) endpoint
+        presigned_url = self.presigned_client.generate_presigned_url(
             ClientMethod="put_object",
             Params=params,
             ExpiresIn=self.presigned_url_expiration
@@ -369,7 +442,7 @@ class S3BlobStore(BlobStore):
         """
         s3_key = self._get_s3_key(blob_id)
 
-        # Check if blob exists
+        # Check if blob exists (use main client for API calls)
         try:
             self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
         except self.ClientError as e:
@@ -379,7 +452,8 @@ class S3BlobStore(BlobStore):
             raise
 
         # Generate pre-signed URL for GET
-        presigned_url = self.s3_client.generate_presigned_url(
+        # Use presigned_client which may have a different (public) endpoint
+        presigned_url = self.presigned_client.generate_presigned_url(
             ClientMethod="get_object",
             Params={
                 "Bucket": self.bucket_name,

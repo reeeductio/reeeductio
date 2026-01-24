@@ -595,6 +595,14 @@ async def upload_blob(
         except ValueError as e:
             raise HTTPException(status_code=403, detail=str(e))
 
+        # Create blob metadata reference before client uploads
+        # This ensures the blob is tracked even if client uploads directly to S3
+        try:
+            blob_store.add_blob_reference(blob_id, space_id, user_id)
+        except FileExistsError:
+            # Reference already exists - blob was already uploaded by this user
+            raise HTTPException(status_code=409, detail="Blob already exists")
+
         # Note: For S3 presigned URLs, size limit cannot be enforced in the URL itself.
         # Clients should validate size before upload. Size will be checked when metadata
         # is added via add_blob() or via S3 bucket policies.
