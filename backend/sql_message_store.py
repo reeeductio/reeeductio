@@ -204,6 +204,13 @@ class SqlMessageStore(MessageStore):
     ) -> List[Dict[str, Any]]:
         """Query messages with time-based filtering"""
         ph = self._get_placeholder
+        reverse_order = (
+            from_ts is not None and
+            to_ts is not None and
+            from_ts > to_ts
+        )
+        range_start = to_ts if reverse_order else from_ts
+        range_end = from_ts if reverse_order else to_ts
 
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -217,17 +224,18 @@ class SqlMessageStore(MessageStore):
             params: List[Any] = [space_id, topic_id]
             param_idx = 2
 
-            if from_ts is not None:
+            if range_start is not None:
                 query += f" AND server_timestamp >= {{{param_idx}}}"
-                params.append(from_ts)
+                params.append(range_start)
                 param_idx += 1
 
-            if to_ts is not None:
+            if range_end is not None:
                 query += f" AND server_timestamp <= {{{param_idx}}}"
-                params.append(to_ts)
+                params.append(range_end)
                 param_idx += 1
 
-            query += f" ORDER BY server_timestamp DESC LIMIT {{{param_idx}}}"
+            order = "DESC" if reverse_order else "ASC"
+            query += f" ORDER BY server_timestamp {order} LIMIT {{{param_idx}}}"
             params.append(limit)
 
             # Format query with placeholders
@@ -248,8 +256,6 @@ class SqlMessageStore(MessageStore):
                     "server_timestamp": row["server_timestamp"]
                 })
 
-            # Reverse to get chronological order
-            messages.reverse()
             return messages
 
     def get_message_by_hash(

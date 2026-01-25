@@ -64,7 +64,12 @@ class MessageStore(ABC):
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """
-        Query messages with time-based filtering
+        Query messages with time-based filtering.
+
+        Ordering:
+        - If from_ts and to_ts are both provided and from_ts > to_ts, return results
+          in reverse-chronological order (newest first).
+        - Otherwise return results in chronological order (oldest first).
 
         Args:
             space_id: Space identifier
@@ -74,7 +79,7 @@ class MessageStore(ABC):
             limit: Maximum number of messages to return
 
         Returns:
-            List of message dictionaries in chronological order, each containing:
+            List of message dictionaries in the requested order, each containing:
                 - message_hash: Content-addressed hash of the message
                 - topic_id: Topic identifier
                 - type: Message type or state path

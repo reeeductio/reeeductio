@@ -125,25 +125,38 @@ class FirestoreMessageStore(MessageStore):
         Query messages with time-based filtering
 
         Uses indexed queries on server_timestamp for efficient retrieval.
-        Results are returned in chronological order.
+        Results are returned in chronological order unless from_ts > to_ts,
+        in which case they are returned in reverse-chronological order.
         """
+        reverse_order = (
+            from_ts is not None and
+            to_ts is not None and
+            from_ts > to_ts
+        )
+        range_start = to_ts if reverse_order else from_ts
+        range_end = from_ts if reverse_order else to_ts
+
         query = self.db.collection('spaces').document(space_id) \
                       .collection('topics').document(topic_id) \
                       .collection('messages') \
                       .order_by('server_timestamp')
 
         # Apply time range filters
-        if from_ts is not None:
-            query = query.where(filter=FieldFilter('server_timestamp', '>=', from_ts))
-        if to_ts is not None:
-            query = query.where(filter=FieldFilter('server_timestamp', '<=', to_ts))
+        if range_start is not None:
+            query = query.where(filter=FieldFilter('server_timestamp', '>=', range_start))
+        if range_end is not None:
+            query = query.where(filter=FieldFilter('server_timestamp', '<=', range_end))
 
         # Apply limit
-        query = query.limit(limit)
+        if reverse_order:
+            query = query.limit_to_last(limit)
+        else:
+            query = query.limit(limit)
 
         # Execute query and convert to list
         results = []
-        for doc in query.stream():
+        docs = query.get() if reverse_order else query.stream()
+        for doc in docs:
             doc_data = doc.to_dict()
             results.append({
                 'message_hash': doc_data['message_hash'],
@@ -156,7 +169,33 @@ class FirestoreMessageStore(MessageStore):
                 'server_timestamp': doc_data['server_timestamp']
             })
 
-        return results
+        if reverse_order:
+            results.reverse()
+        if results or not reverse_order:
+            return results
+
+        # Fallback for reverse-order queries that unexpectedly return empty.
+        # Use the chain head and direct lookup to avoid missing the latest message.
+        head = self.get_chain_head(space_id, topic_id)
+        if not head:
+            return results
+        head_hash = head.get('message_hash')
+        if not head_hash:
+            return results
+
+        message = self.get_message_by_hash(space_id, topic_id, head_hash)
+        if not message:
+            return results
+
+        ts = message.get('server_timestamp')
+        if ts is None:
+            return results
+        if range_start is not None and ts < range_start:
+            return results
+        if range_end is not None and ts > range_end:
+            return results
+
+        return [message]
 
     def get_message_by_hash(
         self,

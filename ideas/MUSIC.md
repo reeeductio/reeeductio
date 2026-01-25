@@ -7,7 +7,7 @@ A browser-based music player application built on the reeeductio spaces API, ena
 ## Architecture
 
 ### Storage Backend
-- **Primary storage**: reeeductio space encryptd key-value store
+- **Primary storage**: reeeductio space encrypted key-value store
 - **Blob storage**: S3 with presigned URLs supporting HTTP range requests
 
 ### Scale
