@@ -4,7 +4,7 @@ import { generateKeyPair, toUserId, toSpaceId, encodeBase64 } from '../crypto.js
 
 describe('AuthSession', () => {
   const mockBaseUrl = 'https://api.example.com';
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();
@@ -232,7 +232,7 @@ describe('AuthSession', () => {
 
 describe('AdminAuthSession', () => {
   const mockBaseUrl = 'https://api.example.com';
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();
