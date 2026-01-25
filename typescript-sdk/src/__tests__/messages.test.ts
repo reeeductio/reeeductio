@@ -85,7 +85,7 @@ describe('computeMessageHash', () => {
 });
 
 describe('postMessage', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();
@@ -159,7 +159,7 @@ describe('postMessage', () => {
       status: 201,
       json: async () => ({
         message_hash: 'M' + 'x'.repeat(43),
-        server_timestamp: new Date().toISOString(),
+        server_timestamp: Date.now(),
       }),
     });
 
@@ -184,7 +184,7 @@ describe('postMessage', () => {
 });
 
 describe('getMessages', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();
@@ -205,7 +205,7 @@ describe('getMessages', () => {
           data: encodeUrlSafeBase64(stringToBytes('Hello')),
           sender: senderId,
           signature: 'sig1',
-          server_timestamp: new Date().toISOString(),
+          server_timestamp: Date.now(),
         },
       ],
       has_more: false,
@@ -269,7 +269,7 @@ describe('getMessages', () => {
 });
 
 describe('getMessage', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();
@@ -337,7 +337,7 @@ describe('validateMessageChain', () => {
         data: encodeUrlSafeBase64(data1),
         sender: senderId,
         signature: 'sig1',
-        server_timestamp: new Date().toISOString(),
+        server_timestamp: Date.now(),
       },
       {
         message_hash: messageId2,
@@ -347,7 +347,7 @@ describe('validateMessageChain', () => {
         data: encodeUrlSafeBase64(data2),
         sender: senderId,
         signature: 'sig2',
-        server_timestamp: new Date().toISOString(),
+        server_timestamp: Date.now(),
       },
     ];
 
@@ -371,7 +371,7 @@ describe('validateMessageChain', () => {
         data: encodeUrlSafeBase64(data1),
         sender: senderId,
         signature: 'sig1',
-        server_timestamp: new Date().toISOString(),
+        server_timestamp: Date.now(),
       },
     ];
 
@@ -399,7 +399,7 @@ describe('validateMessageChain', () => {
         data: encodeUrlSafeBase64(data1),
         sender: senderId,
         signature: 'sig1',
-        server_timestamp: new Date().toISOString(),
+        server_timestamp: Date.now(),
       },
       {
         message_hash: messageId2,
@@ -409,7 +409,7 @@ describe('validateMessageChain', () => {
         data: encodeUrlSafeBase64(data2),
         sender: senderId,
         signature: 'sig2',
-        server_timestamp: new Date().toISOString(),
+        server_timestamp: Date.now(),
       },
     ];
 
@@ -438,7 +438,7 @@ describe('validateMessageChain', () => {
         data: encodeUrlSafeBase64(data),
         sender: senderId,
         signature: 'sig1',
-        server_timestamp: new Date().toISOString(),
+        server_timestamp: Date.now(),
       },
     ];
 

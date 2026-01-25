@@ -28,7 +28,7 @@ describe('computeBlobId', () => {
 });
 
 describe('uploadBlob', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();
@@ -152,7 +152,7 @@ describe('uploadBlob', () => {
 });
 
 describe('downloadBlob', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();
@@ -230,7 +230,7 @@ describe('downloadBlob', () => {
 });
 
 describe('deleteBlob', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();

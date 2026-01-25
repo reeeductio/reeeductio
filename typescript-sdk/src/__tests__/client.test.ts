@@ -9,7 +9,7 @@ import {
 } from '../crypto.js';
 
 describe('Space', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();
@@ -222,7 +222,7 @@ describe('Space', () => {
 });
 
 describe('AdminClient', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch = vi.fn();
 
   beforeEach(() => {
     mockFetch = vi.fn();
