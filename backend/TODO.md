@@ -14,9 +14,9 @@
 14. ~~Require SHA256 checksum on signed url uploads~~ ✓
 15. ~~Add size limits for messages and blobs~~ ✓
 16. ~~Fix vulnerability in authz where we're not verifying the full signature chain back to the creator public key (URGENT)~~ ✓
-17. Verify state signatures in the state store get_state() before adding to the cache, then we don't have to validate again and again in the Channel
+17. ~~Verify state signatures in the state store get_state() before adding to the cache, then we don't have to validate again and again in the Channel~~ ✓
 18. ~~Add an authz cache of public keys that we've already validated chain of trust all the way back to the creator key~~ ✓
 19. ~~Add logging~~ ✓
-20. Require capability for getting or putting blobs, based on state path `blobs/{blob_id}`
-21. Revisit ADMIN.md design in light of new limited `must_be_owner` capabilities
+20. ~~Require capability for getting or putting blobs, based on state path `blobs/{blob_id}`~~ ✓
+21. ~~Revisit ADMIN.md design in light of new limited `must_be_owner` capabilities~~ ✓
 22. Ensure that the Space rejects state entries that are too old ie from before `time.time() * 1000 - epsilon` where `epsilon` is typical internet clock skew.  This prevents replay attacks and is the whole purpose of including a `signed_at` field in the state entry in the first place.  (URGENT)
