@@ -12,6 +12,8 @@ import {
   decryptAesGcm,
   decodeBase64,
   toUserId,
+  toToolId,
+  generateKeyPair,
   stringToBytes,
   bytesToString,
 } from './crypto.js';
@@ -28,6 +30,9 @@ import type {
   DataSetResponse,
   BlobCreated,
   ApiError,
+  Tool,
+  ToolCreated,
+  Capability,
 } from './types.js';
 import { createApiError } from './exceptions.js';
 
@@ -476,6 +481,115 @@ export class Space {
   async getWebSocketConnectionUrl(): Promise<string> {
     const token = await this.auth.getToken();
     return `${this.getWebSocketUrl()}?token=${token}`;
+  }
+
+  // ============================================================
+  // Tool Management
+  // ============================================================
+
+  /**
+   * Create a new tool in this space.
+   *
+   * Tools are limited-use keypairs with NO ambient authority. They can only
+   * perform actions explicitly granted via capabilities.
+   *
+   * @param description - Human-readable description of the tool's purpose
+   * @param options - Optional settings for the tool
+   * @param options.useLimit - Maximum number of write operations the tool can perform
+   * @param options.capabilities - Capabilities to grant to the tool (keyed by capability ID)
+   * @param options.prevHash - Previous state message hash (optional, fetched if not provided)
+   * @returns ToolCreated with tool definition and keypair for authentication
+   *
+   * @example
+   * ```typescript
+   * // Create a tool with capabilities in one call
+   * const { tool, keyPair } = await space.createTool('Security camera in lobby', {
+   *   capabilities: {
+   *     post_images: { op: 'create', path: 'topics/camera-feed' },
+   *     read_config: { op: 'read', path: 'state/config/cameras/{self}' },
+   *   },
+   * });
+   *
+   * // The tool can now authenticate and use its granted capabilities
+   * ```
+   */
+  async createTool(
+    description: string,
+    options?: {
+      useLimit?: number;
+      capabilities?: Record<string, Capability>;
+      prevHash?: string | null;
+    }
+  ): Promise<ToolCreated> {
+    // Generate a new keypair for the tool
+    const keyPair = await generateKeyPair();
+
+    // Create the tool ID from the public key
+    const toolId = toToolId(keyPair.publicKey);
+
+    // Create the tool definition
+    const tool: Tool = {
+      tool_id: toolId,
+      description,
+    };
+
+    if (options?.useLimit !== undefined) {
+      tool.use_limit = options.useLimit;
+    }
+
+    // Store the tool definition at auth/tools/{tool_id}
+    const toolData = JSON.stringify(tool);
+    await this.setPlaintextState(`auth/tools/${toolId}`, toolData, options?.prevHash);
+
+    // Grant capabilities to the tool
+    if (options?.capabilities) {
+      for (const [capabilityId, capability] of Object.entries(options.capabilities)) {
+        await this.addToolCapability(toolId, capabilityId, capability);
+      }
+    }
+
+    return { tool, keyPair };
+  }
+
+  /**
+   * Add a capability to a tool.
+   *
+   * Capabilities define what operations a tool can perform. Tools have NO
+   * ambient authority - they can only use explicitly granted capabilities.
+   *
+   * @param toolId - The tool's typed identifier (starts with 'T')
+   * @param capabilityId - Unique identifier for this capability (e.g., 'read_messages', 'post_images')
+   * @param capability - The capability to grant
+   * @param prevHash - Previous state message hash (optional, fetched if not provided)
+   * @returns MessageCreated with message_hash and server_timestamp
+   *
+   * @example
+   * ```typescript
+   * // Grant read access to all state
+   * await space.addToolCapability(toolId, 'read_all', {
+   *   op: 'read',
+   *   path: 'state/{...}',
+   * });
+   *
+   * // Grant write access to a specific path
+   * await space.addToolCapability(toolId, 'write_sensor_data', {
+   *   op: 'write',
+   *   path: 'state/sensors/{self}/{...}',
+   * });
+   * ```
+   */
+  async addToolCapability(
+    toolId: string,
+    capabilityId: string,
+    capability: Capability,
+    prevHash?: string | null
+  ): Promise<MessageCreated> {
+    const capData = JSON.stringify(capability);
+    return this.setPlaintextState(
+      `auth/tools/${toolId}/rights/${capabilityId}`,
+      capData,
+      prevHash
+    );
   }
 }
 

@@ -58,6 +58,8 @@ export type {
   WebSocketCloseInfo,
   WebSocketErrorInfo,
   WebSocketOptions,
+  Tool,
+  ToolCreated,
 } from './types.js';
 
 export { IdType } from './types.js';

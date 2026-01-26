@@ -347,3 +347,30 @@ export interface WebSocketOptions {
   /** Optional callback for messages */
   onMessage?: (message: Message) => void;
 }
+
+/**
+ * Tool definition stored at auth/tools/{tool_id}.
+ *
+ * Tools are limited-use keypairs with NO ambient authority.
+ * They can only perform actions explicitly granted via capabilities.
+ */
+export interface Tool {
+  /** Typed tool identifier (44-char URL-safe base64, starts with 'T') */
+  tool_id: string;
+  /** Human-readable description of the tool's purpose */
+  description: string;
+  /** Optional maximum number of write operations the tool can perform */
+  use_limit?: number;
+}
+
+/**
+ * Response from creating a tool.
+ *
+ * Includes the tool definition and the keypair for authenticating as the tool.
+ */
+export interface ToolCreated {
+  /** The tool definition */
+  tool: Tool;
+  /** The tool's Ed25519 keypair for authentication */
+  keyPair: KeyPair;
+}
