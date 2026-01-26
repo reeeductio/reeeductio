@@ -10,7 +10,6 @@ import {
   deriveKey,
   encryptAesGcm,
   decryptAesGcm,
-  encodeBase64,
   decodeBase64,
   toUserId,
   stringToBytes,
@@ -148,7 +147,7 @@ export class Space {
       return '';
     }
 
-    // Base64 decode
+    // Base64 decode to get encrypted bytes
     const encryptedBytes = decodeBase64(message.data);
 
     // Decrypt using state key
@@ -191,11 +190,8 @@ export class Space {
     const plaintextBytes = stringToBytes(data);
     const encryptedBytes = encryptAesGcm(plaintextBytes, this.stateKey);
 
-    // Base64 encode for storage
-    const encryptedB64 = encodeBase64(encryptedBytes);
-    const dataBytes = stringToBytes(encryptedB64);
-
-    return this._setState(path, dataBytes, prevHash);
+    // Pass encrypted bytes directly - postMessage handles base64 encoding
+    return this._setState(path, encryptedBytes, prevHash);
   }
 
   /**
@@ -208,9 +204,10 @@ export class Space {
   ): Promise<MessageCreated> {
     const token = await this.auth.getToken();
 
-    // Fetch prev_hash if not provided
+    // Fetch prev_hash if not provided (get latest message using reverse order)
     if (prevHash === undefined) {
-      const msgs = await this.getMessages('state', { limit: 1 });
+      const now = Date.now();
+      const msgs = await this.getMessages('state', { from: now, to: 0, limit: 1 });
       prevHash = msgs.messages.length > 0 ? msgs.messages[0].message_hash : null;
     }
 
