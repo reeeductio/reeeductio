@@ -181,6 +181,7 @@ export function logMessage(
   message: string,
   details?: Record<string, unknown>
 ): void {
+  if (level === 'silent') return;
   const logger = createLogger(scope);
   logger[level](message, details);
 }
