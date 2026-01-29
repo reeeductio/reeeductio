@@ -24,21 +24,20 @@ def runner():
 class TestSpaceCommands:
     """Tests for space management commands."""
 
-    def test_space_create_text_output(self, runner):
-        """Test space create with default text output."""
-        result = runner.invoke(cli, ["space", "create"])
+    def test_space_generate_text_output(self, runner):
+        """Test space generate with default text output."""
+        result = runner.invoke(cli, ["space", "generate"])
 
         assert result.exit_code == 0
-        assert "Space created successfully!" in result.output
+        assert "Generated new space credentials:" in result.output
         assert "Space ID:" in result.output
         assert "User ID:" in result.output
         assert "Private Key:" in result.output
         assert "Symmetric Root:" in result.output
-        assert "IMPORTANT:" in result.output
 
-    def test_space_create_json_output(self, runner):
-        """Test space create with JSON output."""
-        result = runner.invoke(cli, ["space", "create", "--output-format", "json"])
+    def test_space_generate_json_output(self, runner):
+        """Test space generate with JSON output."""
+        result = runner.invoke(cli, ["space", "generate", "--output-format", "json"])
 
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -52,6 +51,20 @@ class TestSpaceCommands:
         assert data["user_id"].startswith("U")
         assert len(data["private_key_hex"]) == 64
         assert len(data["symmetric_root_hex"]) == 64
+
+    def test_space_create_missing_key(self, runner):
+        """Test space create without private key."""
+        result = runner.invoke(cli, ["space", "create", "-s", "ab" * 32])
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_space_create_invalid_symmetric_root(self, runner):
+        """Test space create with invalid symmetric root format."""
+        result = runner.invoke(cli, ["space", "create", "-k", "ab" * 32, "-s", "tooshort"])
+
+        assert result.exit_code != 0
+        assert "64 hex characters" in result.output
 
     def test_space_info_valid_key(self, runner):
         """Test space info with a valid private key."""
@@ -364,7 +377,7 @@ class TestGlobalOptions:
 
     def test_base_url_option(self, runner):
         """Test --base-url option is accepted."""
-        result = runner.invoke(cli, ["--base-url", "http://example.com:9000", "space", "create"])
+        result = runner.invoke(cli, ["--base-url", "http://example.com:9000", "space", "generate"])
 
         assert result.exit_code == 0
 
@@ -718,3 +731,84 @@ class TestToolCommandsE2E:
         data = json.loads(result.output)
         assert "tools" in data
         assert isinstance(data["tools"], list)
+
+
+@pytest.mark.e2e
+class TestSpaceCommandsE2E:
+    """E2E tests for space management commands."""
+
+    def test_space_create_success(self, runner, fresh_keypair, symmetric_root):
+        """Test creating a space on the server."""
+        space_key_hex = fresh_keypair.private_key.hex()
+        sym_root_hex = symmetric_root.hex()
+        space_id = fresh_keypair.to_space_id()
+
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "space", "create",
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        assert "Space created successfully!" in result.output
+        assert space_id in result.output
+        assert E2E_BASE_URL in result.output
+
+    def test_space_create_json_output(self, runner, fresh_keypair, symmetric_root):
+        """Test creating a space with JSON output."""
+        space_key_hex = fresh_keypair.private_key.hex()
+        sym_root_hex = symmetric_root.hex()
+        space_id = fresh_keypair.to_space_id()
+
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "space", "create",
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+                "--output-format", "json",
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        data = json.loads(result.output)
+        assert data["space_id"] == space_id
+        assert data["private_key_hex"] == space_key_hex
+        assert data["symmetric_root_hex"] == sym_root_hex
+        assert data["base_url"] == E2E_BASE_URL
+
+    def test_space_create_can_be_used(self, runner, fresh_keypair, symmetric_root):
+        """Test that a created space can be used for operations."""
+        from reeeductio import Space
+
+        space_key_hex = fresh_keypair.private_key.hex()
+        sym_root_hex = symmetric_root.hex()
+        space_id = fresh_keypair.to_space_id()
+
+        # Create the space via CLI
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "space", "create",
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+        assert result.exit_code == 0
+
+        # Verify we can use the space
+        with Space(
+            space_id=space_id,
+            keypair=fresh_keypair,
+            symmetric_root=symmetric_root,
+            base_url=E2E_BASE_URL,
+        ) as space:
+            # Post a message to verify the space is usable
+            created = space.post_message("test-topic", "test.message", b"hello")
+            assert created.message_hash is not None
