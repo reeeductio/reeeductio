@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { Space } from '../../client.js';
 import { generateKeyPair, toSpaceId, stringToBytes, bytesToString } from '../../crypto.js';
 import { computeBlobId } from '../../blobs.js';
-import { E2E_BACKEND_URL, waitForBackend, fixMinioUrl } from './setup.js';
+import { E2E_BACKEND_URL, waitForBackend } from './setup.js';
 
 /**
  * Custom fetch that fixes MinIO URLs for local testing.
@@ -18,23 +18,37 @@ import { E2E_BACKEND_URL, waitForBackend, fixMinioUrl } from './setup.js';
  */
 function createMinioFixingFetch(): typeof fetch {
   return async (input, init) => {
-    const response = await fetch(input, init);
+    // Fix MinIO URLs in the request (for S3 uploads/downloads)
+    let url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('minio:9000')) {
+      url = url.replace(/minio:9000/g, 'localhost:9000');
+      input = url;
+    }
 
-    // If we get a redirect with a MinIO URL, fix it
-    if (response.status === 307) {
-      const location = response.headers.get('Location');
-      if (location && location.includes('minio:9000')) {
-        // Create a new response with the fixed URL
-        const fixedUrl = fixMinioUrl(location);
-        return new Response(response.body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: new Headers({
-            ...Object.fromEntries(response.headers.entries()),
-            'Location': fixedUrl,
-          }),
-        });
-      }
+    // Clone body if present to avoid detached ArrayBuffer issues on redirects
+    let fetchInit = init;
+    if (init?.body instanceof Uint8Array) {
+      fetchInit = { ...init, body: new Uint8Array(init.body) };
+    }
+
+    const response = await fetch(input, fetchInit);
+
+    // Only process JSON responses from our backend (not S3/MinIO responses)
+    const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (!requestUrl.includes('localhost:8000')) {
+      return response;
+    }
+
+    // Check if response is JSON with upload_url or download_url containing minio:9000
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const text = await response.text();
+      const fixedText = text.replace(/minio:9000/g, 'localhost:9000');
+      return new Response(fixedText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
     }
 
     return response;

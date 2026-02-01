@@ -15,6 +15,7 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -24,7 +25,7 @@ services:
       retries: 5
       start_period: 10s
 
-  # Create default bucket on startup
+  # Create default bucket on startup and configure CORS
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -34,7 +35,8 @@ services:
       /bin/sh -c "
       mc alias set myminio http://minio:9000 minioadmin minioadmin;
       mc mb myminio/e2e-test-bucket --ignore-existing;
-      mc anonymous set download myminio/e2e-test-bucket;
+      mc anonymous set public myminio/e2e-test-bucket;
+      mc admin config set myminio api cors_allow_origin='*';
       exit 0;
       "
 
@@ -69,14 +71,14 @@ services:
         condition: service_completed_successfully
     environment:
       # Use config file
-      CONFIG_FILE: /app/backend/backend/config.e2e.yaml
+      CONFIG_FILE: /app/backend/config.e2e.yaml
       # Override Firestore to use emulator
       FIRESTORE_EMULATOR_HOST: firestore:8080
       GCLOUD_PROJECT: e2e-test-project
     volumes:
       # Mount the e2e config file
-      - ./config.e2e.yaml:/app/backend/backend/config.e2e.yaml:ro
-    working_dir: /app/backend/backend
+      - ./config.e2e.yaml:/app/backend/config.e2e.yaml:ro
+    working_dir: /app/backend
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s

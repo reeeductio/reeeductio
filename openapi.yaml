@@ -674,14 +674,23 @@ paths:
                   size:
                     type: integer
                     description: Size in bytes
-        '307':
-          description: Temporary redirect to S3 pre-signed URL for direct upload
-          headers:
-            Location:
+        '200':
+          description: Pre-signed upload URL returned (for S3-backed storage)
+          content:
+            application/json:
               schema:
-                type: string
-                format: uri
-              description: Pre-signed S3 URL for uploading the blob directly to object storage
+                type: object
+                properties:
+                  blob_id:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                    description: Typed blob identifier (SHA256 hash with header)
+                  upload_url:
+                    type: string
+                    format: uri
+                    description: Pre-signed S3 URL for uploading the blob directly to object storage
         '400':
           description: Invalid blob_id format, type, or blob_id doesn't match content hash
           content:
@@ -718,20 +727,27 @@ paths:
         - BearerAuth: []
       responses:
         '200':
-          description: Blob retrieved successfully (direct download from server)
+          description: Blob retrieved successfully or pre-signed download URL returned
           content:
             application/octet-stream:
               schema:
                 type: string
                 format: binary
-        '307':
-          description: Temporary redirect to S3 pre-signed URL for direct download
-          headers:
-            Location:
+            application/json:
               schema:
-                type: string
-                format: uri
-              description: Pre-signed S3 URL for downloading the blob directly from object storage
+                type: object
+                description: Pre-signed download URL (for S3-backed storage)
+                properties:
+                  blob_id:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                    description: Typed blob identifier (SHA256 hash with header)
+                  download_url:
+                    type: string
+                    format: uri
+                    description: Pre-signed S3 URL for downloading the blob directly from object storage
         '403':
           description: Blob belongs to a different space
           content:

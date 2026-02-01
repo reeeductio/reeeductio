@@ -8,13 +8,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
 # Copy pyproject.toml first for better layer caching
-COPY ../pyproject.toml /app/
+COPY pyproject.toml /app/
 
 # Install dependencies using uv
 RUN uv pip install --system -r pyproject.toml
 
 # Copy backend application code
-COPY . /app/backend/
+COPY backend/ /app/backend/
 
 # Set working directory to backend
 WORKDIR /app/backend

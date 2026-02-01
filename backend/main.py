@@ -58,7 +58,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -221,6 +221,16 @@ class MessagesResponse(BaseModel):
 class BlobUploadResponse(BaseModel):
     blob_id: str
     size: int
+
+
+class BlobUploadUrlResponse(BaseModel):
+    blob_id: str
+    upload_url: str
+
+
+class BlobDownloadUrlResponse(BaseModel):
+    blob_id: str
+    download_url: str
 
 
 class ErrorResponse(BaseModel):
@@ -577,7 +587,7 @@ async def get_message_by_hash(
 # Blob Endpoints
 # ============================================================================
 
-@app.put("/spaces/{space_id}/blobs/{blob_id}", status_code=201, response_model=BlobUploadResponse)
+@app.put("/spaces/{space_id}/blobs/{blob_id}", status_code=201)
 async def upload_blob(
     space_id: str,
     blob_id: str,
@@ -613,10 +623,11 @@ async def upload_blob(
         # Clients should validate size before upload. Size will be checked when metadata
         # is added via add_blob() or via S3 bucket policies.
 
-        # Redirect client to upload directly to S3
-        return RedirectResponse(
-            url=upload_url,
-            status_code=307  # Temporary redirect, preserving method (PUT)
+        # Return presigned URL for client to upload directly to S3
+        # (Using redirect causes CORS issues with cross-origin PUT requests)
+        return BlobUploadUrlResponse(
+            blob_id=blob_id,
+            upload_url=upload_url
         )
 
     # Direct upload to server - read request body with size limit
@@ -665,10 +676,11 @@ async def download_blob(
     try:
         download_url = space.get_blob_download_url(user_id, credentials.credentials, blob_id)
         if download_url:
-            # Redirect client to download directly from S3
-            return RedirectResponse(
-                url=download_url,
-                status_code=307  # Temporary redirect
+            # Return presigned URL for client to download directly from S3
+            # (Using redirect causes CORS issues with cross-origin requests)
+            return BlobDownloadUrlResponse(
+                blob_id=blob_id,
+                download_url=download_url
             )
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))

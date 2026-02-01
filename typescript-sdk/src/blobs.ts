@@ -55,35 +55,31 @@ export async function uploadBlob(
       'Content-Type': 'application/octet-stream',
     },
     body: data,
-    redirect: 'manual', // Handle redirects manually
+    redirect: 'manual',
   });
 
-  // Handle redirect to S3 (307)
+  // Handle 307 redirect to S3 presigned URL
   if (response.status === 307) {
-    const redirectUrl = response.headers.get('Location');
-    if (!redirectUrl) {
-      throw new BlobError('Received 307 redirect but no Location header');
+    const s3Url = response.headers.get('Location');
+    if (!s3Url) {
+      throw new BlobError('307 redirect missing Location header');
     }
-
-    debugLog('blobs', 'Uploading blob to redirect URL', { blobId });
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/octet-stream',
-      // Presigned S3 URLs may require checksum enforcement.
-      'x-amz-checksum-sha256': encodeBase64(hashBytes),
-    };
-    // Upload to S3 directly (no auth header for presigned URL)
-    const s3Response = await fetchFn(redirectUrl, {
+    debugLog('blobs', 'Redirecting blob upload to S3', { blobId, s3Url });
+    const s3Response = await fetchFn(s3Url, {
       method: 'PUT',
-      headers,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'x-amz-checksum-sha256': encodeBase64(hashBytes),
+      },
       body: data,
     });
 
     if (!s3Response.ok) {
-      errorLog('blobs', 'Blob upload redirect failed', { blobId, status: s3Response.status });
+      errorLog('blobs', 'Blob upload to S3 (redirect) failed', { blobId, status: s3Response.status });
       throw new BlobError(`Failed to upload blob to S3: ${s3Response.status}`);
     }
 
-    debugLog('blobs', 'Blob upload redirect ok', { blobId, size: data.length });
+    debugLog('blobs', 'Blob upload to S3 (redirect) ok', { blobId, size: data.length });
     return { blob_id: blobId, size: data.length };
   }
 
@@ -99,10 +95,35 @@ export async function uploadBlob(
     throw createApiError(response.status, error);
   }
 
-  // Direct upload (201)
-  const created = (await response.json()) as BlobCreated;
-  debugLog('blobs', 'PUT blob ok', { status: response.status, blobId: created.blob_id, size: created.size });
-  return created;
+  const result = (await response.json()) as BlobCreated & { upload_url?: string };
+
+  // Check if server returned a presigned upload URL
+  if (result.upload_url) {
+    debugLog('blobs', 'Uploading blob to presigned URL', { blobId });
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/octet-stream',
+      // Presigned S3 URLs may require checksum enforcement.
+      'x-amz-checksum-sha256': encodeBase64(hashBytes),
+    };
+    // Upload to S3 directly (no auth header for presigned URL)
+    const s3Response = await fetchFn(result.upload_url, {
+      method: 'PUT',
+      headers,
+      body: data,
+    });
+
+    if (!s3Response.ok) {
+      errorLog('blobs', 'Blob upload to presigned URL failed', { blobId, status: s3Response.status });
+      throw new BlobError(`Failed to upload blob to S3: ${s3Response.status}`);
+    }
+
+    debugLog('blobs', 'Blob upload to presigned URL ok', { blobId, size: data.length });
+    return { blob_id: blobId, size: data.length };
+  }
+
+  // Direct upload completed (server stored the blob)
+  debugLog('blobs', 'PUT blob ok', { status: response.status, blobId: result.blob_id, size: result.size });
+  return { blob_id: result.blob_id, size: result.size };
 }
 
 /**
@@ -175,25 +196,23 @@ export async function downloadBlob(
     redirect: 'manual',
   });
 
-  // Handle redirect to S3 (307)
+  // Handle 307 redirect to S3 presigned URL
   if (response.status === 307) {
-    const redirectUrl = response.headers.get('Location');
-    if (!redirectUrl) {
-      throw new BlobError('Received 307 redirect but no Location header');
+    const s3Url = response.headers.get('Location');
+    if (!s3Url) {
+      throw new BlobError('307 redirect missing Location header');
     }
-
-    debugLog('blobs', 'Downloading blob from redirect URL', { blobId });
-    // Download from S3 directly (no auth header for presigned URL)
-    const s3Response = await fetchFn(redirectUrl, {
+    debugLog('blobs', 'Redirecting blob download to S3', { blobId, s3Url });
+    const s3Response = await fetchFn(s3Url, {
       method: 'GET',
     });
 
     if (!s3Response.ok) {
-      errorLog('blobs', 'Blob download redirect failed', { blobId, status: s3Response.status });
+      errorLog('blobs', 'Blob download from S3 (redirect) failed', { blobId, status: s3Response.status });
       throw new BlobError(`Failed to download blob from S3: ${s3Response.status}`);
     }
 
-    debugLog('blobs', 'Blob download redirect ok', { blobId });
+    debugLog('blobs', 'Blob download from S3 (redirect) ok', { blobId });
     return new Uint8Array(await s3Response.arrayBuffer());
   }
 
@@ -203,7 +222,28 @@ export async function downloadBlob(
     throw createApiError(response.status, error);
   }
 
-  // Direct download (200)
+  // Check if response is JSON with a download URL
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const result = (await response.json()) as { download_url?: string };
+    if (result.download_url) {
+      debugLog('blobs', 'Downloading blob from presigned URL', { blobId });
+      // Download from S3 directly (no auth header for presigned URL)
+      const s3Response = await fetchFn(result.download_url, {
+        method: 'GET',
+      });
+
+      if (!s3Response.ok) {
+        errorLog('blobs', 'Blob download from presigned URL failed', { blobId, status: s3Response.status });
+        throw new BlobError(`Failed to download blob from S3: ${s3Response.status}`);
+      }
+
+      debugLog('blobs', 'Blob download from presigned URL ok', { blobId });
+      return new Uint8Array(await s3Response.arrayBuffer());
+    }
+  }
+
+  // Direct download (server returned the blob content)
   debugLog('blobs', 'GET blob ok', { status: response.status, blobId });
   return new Uint8Array(await response.arrayBuffer());
 }
