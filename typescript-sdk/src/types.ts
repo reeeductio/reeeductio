@@ -374,3 +374,115 @@ export interface ToolCreated {
   /** The tool's Ed25519 keypair for authentication */
   keyPair: KeyPair;
 }
+
+// ============================================================
+// OPAQUE Types
+// ============================================================
+
+/**
+ * Request for initiating OPAQUE registration.
+ */
+export interface OpaqueRegisterInitRequest {
+  /** Username for OPAQUE registration (unique within the space) */
+  username: string;
+  /** OPAQUE RegistrationRequest message (base64-encoded) */
+  registration_request: string;
+}
+
+/**
+ * Response from OPAQUE registration init.
+ */
+export interface OpaqueRegisterInitResponse {
+  /** OPAQUE RegistrationResponse message (base64-encoded) */
+  registration_response: string;
+}
+
+/**
+ * Request for completing OPAQUE registration.
+ */
+export interface OpaqueRegisterFinishRequest {
+  /** Username (must match the one used in register/init) */
+  username: string;
+  /** OPAQUE RegistrationRecord message (base64-encoded) */
+  registration_record: string;
+}
+
+/**
+ * Response from OPAQUE registration finish.
+ */
+export interface OpaqueRegisterFinishResponse {
+  /** OPAQUE PasswordFile (base64-encoded) for client storage */
+  password_file: string;
+}
+
+/**
+ * Request for initiating OPAQUE login.
+ */
+export interface OpaqueLoginInitRequest {
+  /** Username for OPAQUE login */
+  username: string;
+  /** OPAQUE CredentialRequest message (base64-encoded) */
+  credential_request: string;
+}
+
+/**
+ * Response from OPAQUE login init.
+ */
+export interface OpaqueLoginInitResponse {
+  /** OPAQUE CredentialResponse message (base64-encoded) */
+  credential_response: string;
+}
+
+/**
+ * Request for completing OPAQUE login.
+ */
+export interface OpaqueLoginFinishRequest {
+  /** Username (must match the one used in login/init) */
+  username: string;
+  /** OPAQUE CredentialFinalization message (base64-encoded) */
+  credential_finalization: string;
+}
+
+/**
+ * Response from OPAQUE login finish.
+ */
+export interface OpaqueLoginFinishResponse {
+  /** AES-256-GCM encrypted credentials blob (base64-encoded) */
+  encrypted_credentials: string;
+  /** User's Ed25519 public key (44-char URL-safe base64) */
+  public_key: string;
+}
+
+/**
+ * OPAQUE user record stored at opaque/users/{username} via the /data API.
+ */
+export interface OpaqueUserRecord {
+  /** OPAQUE PasswordFile (base64-encoded) */
+  password_file: string;
+  /** AES-256-GCM encrypted credentials blob (base64-encoded) */
+  encrypted_credentials: string;
+  /** User's Ed25519 public key (44-char URL-safe base64) */
+  public_key: string;
+}
+
+/**
+ * Decrypted credentials recovered from OPAQUE login.
+ */
+export interface OpaqueCredentials {
+  /** 32-byte Ed25519 private key */
+  privateKey: Uint8Array;
+  /** 32-byte symmetric root key */
+  symmetricRoot: Uint8Array;
+  /** User's Ed25519 public key (44-char URL-safe base64) */
+  publicKey: string;
+}
+
+/**
+ * Result from OPAQUE registration flow.
+ */
+export interface OpaqueRegistrationResult {
+  /** The username registered */
+  username: string;
+  /** User's Ed25519 public key (44-char URL-safe base64) */
+  publicKey: string;
+}

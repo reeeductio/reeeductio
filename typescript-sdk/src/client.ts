@@ -20,6 +20,7 @@ import { postMessage, getMessages, getMessage } from './messages.js';
 import { getState, setState, getStateHistory } from './state.js';
 import { getData, setData } from './kvdata.js';
 import { uploadBlob, downloadBlob, deleteBlob, encryptAndUploadBlob, downloadAndDecryptBlob } from './blobs.js';
+import { performOpaqueRegistration, loginWithOpaque } from './opaque.js';
 import type {
   KeyPair,
   Message,
@@ -32,6 +33,7 @@ import type {
   Tool,
   ToolCreated,
   Capability,
+  OpaqueRegistrationResult,
 } from './types.js';
 import type { EncryptedBlobCreated } from './blobs.js';
 import { createApiError } from './exceptions.js';
@@ -637,6 +639,157 @@ export class Space {
       capData,
       prevHash
     );
+  }
+
+  // ============================================================
+  // OPAQUE Password-Based Key Recovery
+  // ============================================================
+
+  /**
+   * Register OPAQUE credentials for password-based login.
+   *
+   * This enables password-based key recovery for the current user or a tool account.
+   * After registration, users can log in with `Space.fromOpaqueLogin()` using their
+   * username and password to recover their keypair and symmetric root.
+   *
+   * **Important**: The caller must already be authenticated to the space. This method
+   * registers the current space's keypair and symmetric root under the given username.
+   *
+   * @param username - Username for OPAQUE login (unique within the space)
+   * @param password - Password for OPAQUE login
+   * @returns Registration result with username and public key
+   *
+   * @example
+   * ```typescript
+   * // Register OPAQUE credentials for the current user
+   * const result = await space.opaqueRegister('alice', 'my-secure-password');
+   * console.log(`Registered ${result.username} with public key ${result.publicKey}`);
+   *
+   * // Later, log in with OPAQUE
+   * const newSpace = await Space.fromOpaqueLogin({
+   *   baseUrl: 'https://api.example.com',
+   *   spaceId: 'C...',
+   *   username: 'alice',
+   *   password: 'my-secure-password',
+   * });
+   * ```
+   */
+  async opaqueRegister(username: string, password: string): Promise<OpaqueRegistrationResult> {
+    const token = await this.auth.getToken();
+
+    return performOpaqueRegistration({
+      fetchFn: this.fetchFn,
+      baseUrl: this.baseUrl,
+      token,
+      spaceId: this.spaceId,
+      username,
+      password,
+      keyPair: this.keyPair,
+      symmetricRoot: this.symmetricRoot,
+      signingPrivateKey: this.keyPair.privateKey,
+      signerId: this.getUserId(),
+    });
+  }
+
+  /**
+   * Register OPAQUE credentials for a new keypair (e.g., for tool accounts or invitations).
+   *
+   * This creates a new keypair and registers it with OPAQUE, allowing the recipient
+   * to log in with a username and password. Use this for:
+   * - Creating tool accounts for onboarding
+   * - Inviting new users with password-based access
+   *
+   * @param username - Username for OPAQUE login
+   * @param password - Password for OPAQUE login
+   * @param options - Additional options
+   * @returns Registration result with the new keypair
+   *
+   * @example
+   * ```typescript
+   * // Create a tool account for onboarding new users
+   * const { keyPair, result } = await space.opaqueRegisterNewKeypair(
+   *   'onboarding-tool',
+   *   'shared-password-123'
+   * );
+   *
+   * // Grant the tool limited capabilities
+   * await space.grantCapabilityToTool(toToolId(keyPair.publicKey), 'add_users', {
+   *   op: 'create',
+   *   path: 'state/auth/users/{any}',
+   * });
+   * ```
+   */
+  async opaqueRegisterNewKeypair(
+    username: string,
+    password: string,
+    options?: {
+      /** Optional keypair to register (generates new one if not provided) */
+      keyPair?: KeyPair;
+    }
+  ): Promise<{ keyPair: KeyPair; result: OpaqueRegistrationResult }> {
+    const token = await this.auth.getToken();
+    const keyPair = options?.keyPair ?? await generateKeyPair();
+
+    const result = await performOpaqueRegistration({
+      fetchFn: this.fetchFn,
+      baseUrl: this.baseUrl,
+      token,
+      spaceId: this.spaceId,
+      username,
+      password,
+      keyPair,
+      symmetricRoot: this.symmetricRoot,
+      signingPrivateKey: this.keyPair.privateKey,
+      signerId: this.getUserId(),
+    });
+
+    return { keyPair, result };
+  }
+
+  /**
+   * Create a Space client by logging in with OPAQUE.
+   *
+   * This performs the OPAQUE login protocol to recover the user's Ed25519 keypair
+   * and symmetric root from their password, then creates and authenticates a Space client.
+   *
+   * @param options - Login options
+   * @returns Authenticated Space client
+   *
+   * @example
+   * ```typescript
+   * const space = await Space.fromOpaqueLogin({
+   *   baseUrl: 'https://api.example.com',
+   *   spaceId: 'C...',
+   *   username: 'alice',
+   *   password: 'my-secure-password',
+   * });
+   *
+   * // The space is ready to use
+   * await space.postMessage('chat', 'text', new TextEncoder().encode('Hello!'));
+   * ```
+   */
+  static async fromOpaqueLogin(options: {
+    baseUrl: string;
+    spaceId: string;
+    username: string;
+    password: string;
+    fetch?: typeof fetch;
+  }): Promise<Space> {
+    const { credentials, keyPair } = await loginWithOpaque({
+      baseUrl: options.baseUrl,
+      spaceId: options.spaceId,
+      username: options.username,
+      password: options.password,
+      fetch: options.fetch,
+    });
+
+    return new Space({
+      spaceId: options.spaceId,
+      keyPair,
+      symmetricRoot: credentials.symmetricRoot,
+      baseUrl: options.baseUrl,
+      fetch: options.fetch,
+    });
   }
 }
 

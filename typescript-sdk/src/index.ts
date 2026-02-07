@@ -60,6 +60,18 @@ export type {
   WebSocketOptions,
   Tool,
   ToolCreated,
+  // OPAQUE types
+  OpaqueRegisterInitRequest,
+  OpaqueRegisterInitResponse,
+  OpaqueRegisterFinishRequest,
+  OpaqueRegisterFinishResponse,
+  OpaqueLoginInitRequest,
+  OpaqueLoginInitResponse,
+  OpaqueLoginFinishRequest,
+  OpaqueLoginFinishResponse,
+  OpaqueUserRecord,
+  OpaqueCredentials,
+  OpaqueRegistrationResult,
 } from './types.js';
 
 export { IdType } from './types.js';
@@ -75,6 +87,9 @@ export {
   BlobError,
   StreamError,
   ApiRequestError,
+  OpaqueError,
+  OpaqueNotEnabledError,
+  OpaqueRateLimitError,
   createApiError,
 } from './exceptions.js';
 
@@ -140,6 +155,19 @@ export {
   errorLog,
   traceLog,
 } from './debug.js';
+
+// OPAQUE operations
+export {
+  wrapCredentials,
+  unwrapCredentials,
+  opaqueRegisterInit,
+  opaqueRegisterFinish,
+  opaqueLoginInit,
+  opaqueLoginFinish,
+  performOpaqueRegistration,
+  performOpaqueLogin,
+  loginWithOpaque,
+} from './opaque.js';
 
 // High-level clients
 export { Space, AdminClient } from './client.js';

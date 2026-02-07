@@ -101,6 +101,39 @@ export class ApiRequestError extends ReeeductioError {
 }
 
 /**
+ * Error during OPAQUE operations.
+ */
+export class OpaqueError extends ReeeductioError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OpaqueError';
+  }
+}
+
+/**
+ * Error when OPAQUE is not enabled for a space (501 Not Implemented).
+ */
+export class OpaqueNotEnabledError extends OpaqueError {
+  constructor(message: string = 'OPAQUE is not enabled for this space') {
+    super(message);
+    this.name = 'OpaqueNotEnabledError';
+  }
+}
+
+/**
+ * Error when rate limited during OPAQUE login (429 Too Many Requests).
+ */
+export class OpaqueRateLimitError extends OpaqueError {
+  public readonly retryAfter?: number;
+
+  constructor(message: string, retryAfter?: number) {
+    super(message);
+    this.name = 'OpaqueRateLimitError';
+    this.retryAfter = retryAfter;
+  }
+}
+
+/**
  * Convert an API response error to the appropriate exception type.
  */
 export function createApiError(statusCode: number, apiError?: ApiError): ReeeductioError {
@@ -119,6 +152,12 @@ export function createApiError(statusCode: number, apiError?: ApiError): Reeeduc
       return new ChainError(message);
     case 413:
       return new BlobError(message);
+    case 429: {
+      const retryAfter = apiError?.details?.retry_after as number | undefined;
+      return new OpaqueRateLimitError(message, retryAfter);
+    }
+    case 501:
+      return new OpaqueNotEnabledError(message);
     default:
       return new ApiRequestError(message, statusCode, apiError);
   }
