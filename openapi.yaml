@@ -182,9 +182,15 @@ paths:
         This is step 1 of 2 in OPAQUE registration. After receiving the response, the client
         computes its registration record and submits it via `/opaque/register/finish`.
 
+        **Requires authentication**: Only authenticated space members can register OPAQUE usernames.
+        This ensures that either an admin is registering a tool account, or a user is registering
+        their own credentials after being added to the space.
+
         **Protocol**: OPAQUE-3DH with ristretto255 and SHA-512
       parameters:
         - $ref: '#/components/parameters/SpaceId'
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -229,6 +235,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '409':
           description: Username already registered in this space
           content:
@@ -248,27 +256,45 @@ paths:
       summary: Complete OPAQUE registration
       description: |
         Complete the OPAQUE registration flow. The client submits its registration record
-        (containing the OPAQUE envelope) along with the wrapped credentials blob.
+        and receives the computed password_file to store via the `/data` API.
 
-        This is step 2 of 2 in OPAQUE registration. The server stores:
-        - The OPAQUE registration record (for future logins)
-        - The encrypted credentials blob (returned after successful login)
-        - The Ed25519 public key (for RBAC integration)
+        This is step 2 of 2 in OPAQUE registration. The server:
+        - Computes the OPAQUE password_file from the registration_record
+        - Returns the password_file for the client to store
 
-        **Credential wrapping**: The client derives a wrapping key from OPAQUE's `export_key`:
+        After receiving the response, the client must:
+        1. Wrap its credentials using OPAQUE's `export_key`
+        2. Assemble the complete OPAQUE record (password_file + encrypted_credentials + public_key)
+        3. Sign and store via `PUT /data/opaque/users/{username}`
+
+        **Requires authentication**: Must be called by the same authenticated user who called
+        `/opaque/register/init`. This ensures continuity of the registration flow.
+
+        **Credential wrapping** (done by client after this call):
         ```
         wrap_key = HKDF-SHA256(export_key, info="reeeductio-credential-wrap")
         encrypted_creds = AES-256-GCM(wrap_key, nonce, privateKey || symmetricRoot)
         ```
+
+        **Storage format** (stored by client at `opaque/users/{username}`):
+        ```json
+        {
+          "password_file": "<base64 from this response>",
+          "encrypted_credentials": "<base64 AES-GCM blob>",
+          "public_key": "<44-char Ed25519 pubkey>"
+        }
+        ```
       parameters:
         - $ref: '#/components/parameters/SpaceId'
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [username, registration_record, encrypted_credentials, public_key]
+              required: [username, registration_record]
               properties:
                 username:
                   type: string
@@ -283,47 +309,30 @@ paths:
                   description: |
                     OPAQUE RegistrationRecord message (base64-encoded).
                     Contains the client's envelope and OPAQUE AKE public key.
-                encrypted_credentials:
-                  type: string
-                  format: base64
-                  maxLength: 1024
-                  description: |
-                    AES-256-GCM encrypted blob containing the user's credentials
-                    (Ed25519 private key + symmetric root). Wrapped with a key derived
-                    from OPAQUE's `export_key`. Format:
-                    - 12-byte nonce
-                    - 32-byte encrypted private key
-                    - 32-byte encrypted symmetric root
-                    - 16-byte GCM auth tag
-                    Total: 92 bytes before base64 encoding (~124 chars).
-                public_key:
-                  type: string
-                  pattern: '^[A-Za-z0-9_-]{44}$'
-                  minLength: 44
-                  maxLength: 44
-                  description: |
-                    Ed25519 public key (typed, 44-char URL-safe base64).
-                    This is the user's reeeductio identity, registered in the space's RBAC.
-                    NOT the OPAQUE AKE public key (which is internal to OPAQUE).
       responses:
-        '201':
-          description: Registration completed successfully
+        '200':
+          description: Registration protocol completed, password_file returned for client storage
           content:
             application/json:
               schema:
                 type: object
+                required: [password_file]
                 properties:
-                  username:
+                  password_file:
                     type: string
-                    description: The registered username
-                  public_key:
-                    type: string
-                    pattern: '^[A-Za-z0-9_-]{44}$'
-                    minLength: 44
-                    maxLength: 44
-                    description: The registered Ed25519 public key
+                    format: base64
+                    description: |
+                      OPAQUE PasswordFile (base64-encoded). The client must store this
+                      along with encrypted_credentials and public_key at the path
+                      `opaque/users/{username}` via the `/data` API.
         '400':
           description: Invalid registration record or mismatched username
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication failed or registration must be completed by the same user who initiated it
           content:
             application/json:
               schema:
@@ -1601,41 +1610,32 @@ components:
           maxLength: 44
           description: Ed25519 public key (for verification and RBAC lookup)
 
-    OpaqueUser:
+    OpaqueUserRecord:
       type: object
       description: |
-        OPAQUE user record stored on the server. This is an internal schema
-        representing what the server stores, not directly exposed via API.
+        OPAQUE user record stored at `opaque/users/{username}` via the /data API.
+        This is stored as a signed data entry with the JSON content base64-encoded.
+      required: [password_file, encrypted_credentials, public_key]
       properties:
-        username:
-          type: string
-          pattern: '^[a-zA-Z0-9._@+-]+$'
-          description: Unique username within the space
-        registration_record:
+        password_file:
           type: string
           format: base64
-          description: OPAQUE server-side registration record
+          description: |
+            OPAQUE PasswordFile (base64-encoded). Returned by the server during
+            registration and used by the server during login to evaluate the OPRF.
         encrypted_credentials:
           type: string
           format: base64
-          description: Wrapped credentials (returned after successful login)
+          description: |
+            AES-256-GCM encrypted credentials blob. Contains the user's Ed25519
+            private key and symmetric root, wrapped with a key derived from
+            OPAQUE's export_key. Returned to the client after successful login.
         public_key:
           type: string
           pattern: '^[A-Za-z0-9_-]{44}$'
           minLength: 44
           maxLength: 44
-          description: User's Ed25519 public key
-        created_at:
-          type: integer
-          format: int64
-          description: Unix timestamp in milliseconds when user was registered
-        failed_attempts:
-          type: integer
-          description: Count of recent failed login attempts (for rate limiting)
-        locked_until:
-          type: integer
-          format: int64
-          description: Unix timestamp in milliseconds when lockout expires (if locked)
+          description: User's Ed25519 public key (for verification and RBAC lookup)
 
     Error:
       type: object

@@ -239,6 +239,44 @@ class ErrorResponse(BaseModel):
     details: Optional[Dict[str, Any]] = None
 
 
+# OPAQUE request/response models
+class OpaqueRegisterInitRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=255, pattern=r'^[a-zA-Z0-9._@+-]+$')
+    registration_request: str = Field(..., description="Base64-encoded OPAQUE RegistrationRequest")
+
+
+class OpaqueRegisterInitResponse(BaseModel):
+    registration_response: str = Field(..., description="Base64-encoded OPAQUE RegistrationResponse")
+
+
+class OpaqueRegisterFinishRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=255, pattern=r'^[a-zA-Z0-9._@+-]+$')
+    registration_record: str = Field(..., description="Base64-encoded OPAQUE RegistrationUpload")
+
+
+class OpaqueRegisterFinishResponse(BaseModel):
+    password_file: str = Field(..., description="Base64-encoded OPAQUE PasswordFile for client to store via /data API")
+
+
+class OpaqueLoginInitRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=255, pattern=r'^[a-zA-Z0-9._@+-]+$')
+    credential_request: str = Field(..., description="Base64-encoded OPAQUE CredentialRequest")
+
+
+class OpaqueLoginInitResponse(BaseModel):
+    credential_response: str = Field(..., description="Base64-encoded OPAQUE CredentialResponse")
+
+
+class OpaqueLoginFinishRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=255, pattern=r'^[a-zA-Z0-9._@+-]+$')
+    credential_finalization: str = Field(..., description="Base64-encoded OPAQUE CredentialFinalization")
+
+
+class OpaqueLoginFinishResponse(BaseModel):
+    encrypted_credentials: str = Field(..., description="Base64-encoded AES-GCM encrypted credentials")
+    public_key: str
+
+
 # ============================================================================
 # Authentication Endpoints
 # ============================================================================
@@ -306,6 +344,156 @@ async def auth_refresh(
         return space.refresh_jwt(credentials.credentials)
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
+
+
+# ============================================================================
+# OPAQUE Endpoints (Password-Based Key Recovery)
+# ============================================================================
+
+@app.post("/spaces/{space_id}/opaque/register/init", response_model=OpaqueRegisterInitResponse)
+async def opaque_register_init(
+    space_id: str,
+    request: OpaqueRegisterInitRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Start OPAQUE registration.
+
+    Requires authentication - only space members can register OPAQUE usernames.
+    The client sends a blinded password element (RegistrationRequest) and receives
+    a server-evaluated response (RegistrationResponse).
+    """
+    logger.debug(f"OPAQUE register/init: space={space_id}, username={request.username}")
+    space = space_manager.get_space(space_id)
+
+    try:
+        result = space.opaque_register_init(
+            request.username,
+            request.registration_request,
+            credentials.credentials
+        )
+        return OpaqueRegisterInitResponse(registration_response=result["registration_response"])
+    except ValueError as e:
+        error_msg = str(e)
+        logger.warning(f"OPAQUE register/init failed: space={space_id}, username={request.username}, error={error_msg}")
+        if "not enabled" in error_msg.lower() or "not available" in error_msg.lower():
+            raise HTTPException(status_code=501, detail=error_msg)
+        elif "already registered" in error_msg.lower():
+            raise HTTPException(status_code=409, detail=error_msg)
+        elif "token" in error_msg.lower() or "expired" in error_msg.lower():
+            raise HTTPException(status_code=401, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+
+@app.post("/spaces/{space_id}/opaque/register/finish", response_model=OpaqueRegisterFinishResponse)
+async def opaque_register_finish(
+    space_id: str,
+    request: OpaqueRegisterFinishRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Complete OPAQUE registration.
+
+    Requires authentication - must be called by the same user who called register/init.
+    Returns the OPAQUE password_file for the client to store via the /data API
+    along with encrypted_credentials and public_key.
+    """
+    logger.debug(f"OPAQUE register/finish: space={space_id}, username={request.username}")
+    space = space_manager.get_space(space_id)
+
+    try:
+        result = space.opaque_register_finish(
+            request.username,
+            request.registration_record,
+            credentials.credentials
+        )
+        logger.info(f"OPAQUE registration completed: space={space_id}, username={request.username}")
+        return OpaqueRegisterFinishResponse(
+            password_file=result["password_file"]
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        logger.warning(f"OPAQUE register/finish failed: space={space_id}, username={request.username}, error={error_msg}")
+        if "not enabled" in error_msg.lower() or "not available" in error_msg.lower():
+            raise HTTPException(status_code=501, detail=error_msg)
+        elif "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif "already registered" in error_msg.lower():
+            raise HTTPException(status_code=409, detail=error_msg)
+        elif "token" in error_msg.lower() or "must be completed by" in error_msg.lower():
+            raise HTTPException(status_code=401, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+
+@app.post("/spaces/{space_id}/opaque/login/init", response_model=OpaqueLoginInitResponse)
+async def opaque_login_init(
+    space_id: str,
+    request: OpaqueLoginInitRequest
+):
+    """
+    Start OPAQUE login.
+
+    The client sends a credential request containing a blinded password element.
+    The server responds with the OPRF evaluation, envelope, and key exchange message.
+    """
+    logger.debug(f"OPAQUE login/init: space={space_id}, username={request.username}")
+    space = space_manager.get_space(space_id)
+
+    try:
+        result = space.opaque_login_init(request.username, request.credential_request)
+        return OpaqueLoginInitResponse(credential_response=result["credential_response"])
+    except ValueError as e:
+        error_msg = str(e)
+        logger.warning(f"OPAQUE login/init failed: space={space_id}, username={request.username}, error={error_msg}")
+        if "not enabled" in error_msg.lower():
+            raise HTTPException(status_code=501, detail=error_msg)
+        elif "not found" in error_msg.lower():
+            raise HTTPException(status_code=401, detail=error_msg)
+        elif "rate limit" in error_msg.lower() or "locked" in error_msg.lower():
+            raise HTTPException(status_code=429, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+
+@app.post("/spaces/{space_id}/opaque/login/finish", response_model=OpaqueLoginFinishResponse)
+async def opaque_login_finish(
+    space_id: str,
+    request: OpaqueLoginFinishRequest
+):
+    """
+    Complete OPAQUE login.
+
+    The client submits its key exchange finalization (KE3). The server validates
+    the OPAQUE protocol completion and returns the encrypted credentials blob.
+
+    Note: This does NOT return a session token. The client must still authenticate
+    via /auth/challenge and /auth/verify using the recovered Ed25519 keypair.
+    """
+    logger.debug(f"OPAQUE login/finish: space={space_id}, username={request.username}")
+    space = space_manager.get_space(space_id)
+
+    try:
+        result = space.opaque_login_finish(request.username, request.credential_finalization)
+        logger.info(f"OPAQUE login completed: space={space_id}, username={request.username}")
+        return OpaqueLoginFinishResponse(
+            encrypted_credentials=result["encrypted_credentials"],
+            public_key=result["public_key"]
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        logger.warning(f"OPAQUE login/finish failed: space={space_id}, username={request.username}, error={error_msg}")
+        if "not enabled" in error_msg.lower():
+            raise HTTPException(status_code=501, detail=error_msg)
+        elif "not found" in error_msg.lower() or "expired" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif "authentication" in error_msg.lower() or "invalid" in error_msg.lower():
+            raise HTTPException(status_code=401, detail=error_msg)
+        elif "rate limit" in error_msg.lower() or "locked" in error_msg.lower():
+            raise HTTPException(status_code=429, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=error_msg)
 
 
 # ============================================================================

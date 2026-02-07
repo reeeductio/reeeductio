@@ -29,9 +29,17 @@ from .exceptions import (
     ConflictError,
     NetworkError,
     NotFoundError,
+    OpaqueError,
+    OpaqueNotAvailableError,
+    OpaqueNotEnabledError,
     ReeeductioError,
     StreamError,
     ValidationError,
+)
+from .opaque import (
+    OpaqueCredentials,
+    opaque_login,
+    opaque_login_async,
 )
 from .models import (
     AuthChallenge,
@@ -61,6 +69,10 @@ __all__ = [
     # Authentication
     "AuthSession",
     "AsyncAuthSession",
+    # OPAQUE password-based key recovery
+    "opaque_login",
+    "opaque_login_async",
+    "OpaqueCredentials",
     # Crypto utilities
     "Ed25519KeyPair",
     "generate_keypair",
@@ -100,4 +112,7 @@ __all__ = [
     "BlobError",
     "NetworkError",
     "StreamError",
+    "OpaqueError",
+    "OpaqueNotAvailableError",
+    "OpaqueNotEnabledError",
 ]

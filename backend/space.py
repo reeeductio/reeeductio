@@ -10,7 +10,8 @@ message handling, and WebSocket connections. It's designed to be:
 
 import asyncio
 import time
-from typing import Optional, List, Dict, Any, Set
+import base64
+from typing import Optional, List, Dict, Any, Set, Tuple
 from fastapi import WebSocket
 import json
 
@@ -25,6 +26,25 @@ from path_validation import validate_user_path, PathValidationError
 from exceptions import ChainConflictError
 import secrets
 import jwt
+
+# Optional OPAQUE support
+try:
+    from opaque_snake import (
+        OpaqueServer,
+        OpaqueClient,
+        RegistrationRequest,
+        RegistrationResponse,
+        RegistrationUpload,
+        CredentialRequest,
+        CredentialResponse,
+        CredentialFinalization,
+        PasswordFile,
+        AuthenticationError,
+        SerializationError,
+    )
+    OPAQUE_AVAILABLE = True
+except ImportError:
+    OPAQUE_AVAILABLE = False
 
 
 class Space:
@@ -92,6 +112,15 @@ class Space:
         # In-memory challenge storage (for authentication)
         # In production, store in Redis with TTL
         self.challenges: Dict[str, Dict[str, Any]] = {}
+
+        # OPAQUE protocol state storage (in-memory, ephemeral)
+        # Keys are usernames, values contain state and expiration
+        self._opaque_registration_state: Dict[str, Dict[str, Any]] = {}
+        self._opaque_login_state: Dict[str, Dict[str, Any]] = {}
+        self._opaque_state_expiry_seconds = 300  # 5 minutes
+
+        # Cached OPAQUE server instance (lazy-loaded)
+        self._opaque_server: Optional[Any] = None
 
     #region Authentication
     # ========================================================================
@@ -1182,6 +1211,313 @@ class Space:
 
         # Remove the reference (will delete blob content if no references remain)
         return self.blob_store.remove_blob_reference(blob_id, self.space_id, user_id)
+
+    #region OPAQUE
+    # ========================================================================
+    # OPAQUE Password-Based Key Recovery
+    # ========================================================================
+
+    def _get_opaque_server(self) -> "OpaqueServer":
+        """
+        Get the OPAQUE server instance for this space.
+
+        The server setup must be uploaded by an admin before OPAQUE can be used.
+        The presence of the server setup at 'opaque/server/setup' determines
+        whether OPAQUE is enabled for this space.
+
+        Returns:
+            OpaqueServer instance
+
+        Raises:
+            ValueError: If OPAQUE is not available or not enabled for this space
+        """
+        if not OPAQUE_AVAILABLE:
+            raise ValueError("OPAQUE is not available (opaque_snake not installed)")
+
+        if self._opaque_server is not None:
+            return self._opaque_server
+
+        # Load server setup from data store (must be uploaded by admin)
+        setup_data = self.data_store.get_data(self.space_id, "opaque/server/setup")
+        if not setup_data:
+            raise ValueError("OPAQUE is not enabled for this space (no server setup found)")
+
+        try:
+            setup_bytes = base64.b64decode(setup_data["data"])
+            self._opaque_server = OpaqueServer(setup_bytes)
+            return self._opaque_server
+        except Exception as e:
+            raise ValueError(f"Invalid OPAQUE server setup: {e}")
+
+    def _cleanup_expired_opaque_state(self) -> None:
+        """Remove expired OPAQUE registration and login state."""
+        now = int(time.time() * 1000)
+
+        # Clean up registration state
+        expired_reg = [
+            username for username, state in self._opaque_registration_state.items()
+            if state.get("expires_at", 0) < now
+        ]
+        for username in expired_reg:
+            del self._opaque_registration_state[username]
+
+        # Clean up login state
+        expired_login = [
+            username for username, state in self._opaque_login_state.items()
+            if state.get("expires_at", 0) < now
+        ]
+        for username in expired_login:
+            del self._opaque_login_state[username]
+
+    def opaque_register_init(
+        self,
+        username: str,
+        registration_request_b64: str,
+        token: str
+    ) -> Dict[str, str]:
+        """
+        Start OPAQUE registration (step 1 of 2).
+
+        Requires authentication - only space members can register OPAQUE usernames.
+
+        Args:
+            username: Human-readable username for this registration
+            registration_request_b64: Base64-encoded OPAQUE RegistrationRequest
+            token: JWT authentication token
+
+        Returns:
+            Dictionary with registration_response (base64-encoded)
+
+        Raises:
+            ValueError: If auth fails, OPAQUE not available, username taken, or invalid request
+        """
+        # Authenticate - only space members can register OPAQUE usernames
+        user = self.authenticate_request(token)
+
+        self._cleanup_expired_opaque_state()
+
+        server = self._get_opaque_server()
+
+        # Check if username is already registered
+        existing = self.data_store.get_data(self.space_id, f"opaque/users/{username}")
+        if existing:
+            raise ValueError(f"Username '{username}' is already registered")
+
+        # Check if there's a pending registration for this username
+        if username in self._opaque_registration_state:
+            # Allow overwriting pending registration (user may have restarted)
+            pass
+
+        # Parse the registration request
+        try:
+            request_bytes = base64.b64decode(registration_request_b64)
+            registration_request = RegistrationRequest.from_bytes(request_bytes)
+        except Exception as e:
+            raise ValueError(f"Invalid registration request: {e}")
+
+        # Create server response
+        try:
+            registration_response = server.create_registration_response(registration_request, username)
+        except Exception as e:
+            raise ValueError(f"Failed to create registration response: {e}")
+
+        # Store the pending state (track who initiated and that init was called)
+        expires_at = int(time.time() * 1000) + (self._opaque_state_expiry_seconds * 1000)
+        self._opaque_registration_state[username] = {
+            "expires_at": expires_at,
+            "initiated_by": user["id"],
+        }
+
+        # Return base64-encoded response
+        return {
+            "registration_response": base64.b64encode(registration_response.to_bytes()).decode('ascii')
+        }
+
+    def opaque_register_finish(
+        self,
+        username: str,
+        registration_record_b64: str,
+        token: str
+    ) -> Dict[str, str]:
+        """
+        Complete OPAQUE registration (step 2 of 2).
+
+        Requires authentication - must be called by the same user who called register/init.
+        Returns the password_file for the client to store via the /data API.
+
+        Args:
+            username: Username from register/init
+            registration_record_b64: Base64-encoded OPAQUE RegistrationUpload
+            token: JWT authentication token
+
+        Returns:
+            Dictionary with password_file (base64-encoded)
+
+        Raises:
+            ValueError: If auth fails, registration not found, expired, or invalid data
+        """
+        # Authenticate
+        user = self.authenticate_request(token)
+
+        self._cleanup_expired_opaque_state()
+
+        server = self._get_opaque_server()
+
+        # Check if we have pending registration for this username
+        if username not in self._opaque_registration_state:
+            raise ValueError(f"No pending registration found for '{username}' (init not called or expired)")
+
+        # Verify same user who initiated is completing the registration
+        pending = self._opaque_registration_state[username]
+        if pending.get("initiated_by") != user["id"]:
+            raise ValueError("Registration must be completed by the same user who initiated it")
+
+        # Check if username was registered while we were waiting
+        existing = self.data_store.get_data(self.space_id, f"opaque/users/{username}")
+        if existing:
+            del self._opaque_registration_state[username]
+            raise ValueError(f"Username '{username}' is already registered")
+
+        # Parse the registration upload
+        try:
+            upload_bytes = base64.b64decode(registration_record_b64)
+            registration_upload = RegistrationUpload.from_bytes(upload_bytes)
+        except Exception as e:
+            raise ValueError(f"Invalid registration record: {e}")
+
+        # Finalize registration on server
+        try:
+            password_file = server.finish_registration(registration_upload)
+        except Exception as e:
+            raise ValueError(f"Failed to finalize registration: {e}")
+
+        # Clean up pending state
+        del self._opaque_registration_state[username]
+
+        # Return password_file for client to store via /data API
+        return {
+            "password_file": base64.b64encode(password_file.to_bytes()).decode('ascii')
+        }
+
+    def opaque_login_init(self, username: str, credential_request_b64: str) -> Dict[str, str]:
+        """
+        Start OPAQUE login (step 1 of 2).
+
+        Args:
+            username: Username to log in as
+            credential_request_b64: Base64-encoded OPAQUE CredentialRequest
+
+        Returns:
+            Dictionary with credential_response (base64-encoded)
+
+        Raises:
+            ValueError: If OPAQUE not available, user not found, or invalid request
+        """
+        self._cleanup_expired_opaque_state()
+
+        server = self._get_opaque_server()
+
+        # Load user's OPAQUE record (single entry containing all data)
+        user_data = self.data_store.get_data(self.space_id, f"opaque/users/{username}")
+        if not user_data:
+            raise ValueError(f"User '{username}' not found")
+
+        try:
+            record = json.loads(base64.b64decode(user_data["data"]).decode('utf-8'))
+            pf_bytes = base64.b64decode(record["password_file"])
+            password_file = PasswordFile.from_bytes(pf_bytes)
+        except Exception as e:
+            raise ValueError(f"Invalid OPAQUE record for user '{username}': {e}")
+
+        # Parse credential request
+        try:
+            request_bytes = base64.b64decode(credential_request_b64)
+            credential_request = CredentialRequest.from_bytes(request_bytes)
+        except Exception as e:
+            raise ValueError(f"Invalid credential request: {e}")
+
+        # Create credential response
+        try:
+            credential_response, server_login_state = server.create_credential_response(
+                credential_request, username, password_file
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to create credential response: {e}")
+
+        # Store server login state (needed for finish)
+        expires_at = int(time.time() * 1000) + (self._opaque_state_expiry_seconds * 1000)
+        self._opaque_login_state[username] = {
+            "server_state": server_login_state,
+            "expires_at": expires_at
+        }
+
+        # Return base64-encoded response
+        return {
+            "credential_response": base64.b64encode(credential_response.to_bytes()).decode('ascii')
+        }
+
+    def opaque_login_finish(self, username: str, credential_finalization_b64: str) -> Dict[str, str]:
+        """
+        Complete OPAQUE login (step 2 of 2).
+
+        Args:
+            username: Username from login/init
+            credential_finalization_b64: Base64-encoded OPAQUE CredentialFinalization
+
+        Returns:
+            Dictionary with encrypted_credentials and public_key
+
+        Raises:
+            ValueError: If login not found, expired, or authentication failed
+        """
+        self._cleanup_expired_opaque_state()
+
+        server = self._get_opaque_server()
+
+        # Check if we have pending login for this username
+        if username not in self._opaque_login_state:
+            raise ValueError(f"No pending login found for '{username}' (init not called or expired)")
+
+        login_state = self._opaque_login_state[username]
+        server_login_state = login_state["server_state"]
+
+        # Parse credential finalization
+        try:
+            finalization_bytes = base64.b64decode(credential_finalization_b64)
+            credential_finalization = CredentialFinalization.from_bytes(finalization_bytes)
+        except Exception as e:
+            del self._opaque_login_state[username]
+            raise ValueError(f"Invalid credential finalization: {e}")
+
+        # Verify login on server side
+        try:
+            _session_keys = server.finish_login(credential_finalization, server_login_state)
+        except AuthenticationError:
+            del self._opaque_login_state[username]
+            raise ValueError("Authentication failed: invalid password")
+        except Exception as e:
+            del self._opaque_login_state[username]
+            raise ValueError(f"Login verification failed: {e}")
+
+        # Load user's OPAQUE record
+        user_data = self.data_store.get_data(self.space_id, f"opaque/users/{username}")
+        if not user_data:
+            del self._opaque_login_state[username]
+            raise ValueError(f"User '{username}' not found")
+
+        try:
+            record = json.loads(base64.b64decode(user_data["data"]).decode('utf-8'))
+        except Exception as e:
+            del self._opaque_login_state[username]
+            raise ValueError(f"Invalid OPAQUE record for user '{username}': {e}")
+
+        # Clean up login state
+        del self._opaque_login_state[username]
+
+        return {
+            "encrypted_credentials": record["encrypted_credentials"],
+            "public_key": record["public_key"]
+        }
 
     #region WebSockets
     # ========================================================================

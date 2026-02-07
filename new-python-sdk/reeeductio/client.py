@@ -596,6 +596,116 @@ class Space:
             private_key=self.keypair.private_key,
         )
 
+    # ============================================================
+    # OPAQUE Password-Based Key Recovery
+    # ============================================================
+
+    def opaque_register(
+        self,
+        username: str,
+        password: str,
+        user_id: str | None = None,
+        private_key: bytes | None = None,
+    ) -> str:
+        """
+        Register OPAQUE credentials for password-based login.
+
+        After registration, the user can recover their keypair and symmetric_root
+        by logging in with their username and password using opaque_login().
+
+        This method requires authentication (auto-authenticates if enabled).
+
+        Uses the opaque_snake library for the OPAQUE protocol.
+
+        Args:
+            username: OPAQUE username (must be unique within the space)
+            password: Password for future logins
+            user_id: Typed identifier string (USER or TOOL) for the public key.
+                If None, uses self.keypair.to_user_id().
+            private_key: 32-byte Ed25519 private key matching user_id.
+                If None, uses self.keypair.private_key.
+
+        Returns:
+            The username that was registered
+
+        Raises:
+            OpaqueNotAvailableError: If opaque_snake is not installed
+            OpaqueNotEnabledError: If OPAQUE is not enabled for this space
+            OpaqueError: If registration fails
+            ValidationError: If username already exists or user_id doesn't match private_key
+
+        Example:
+            # Register after being added to a space
+            space = Space(space_id, keypair, symmetric_root, base_url)
+            space.opaque_register("alice", "my-secure-password")
+
+            # Register with a tool key
+            space.opaque_register("tool-alice", "tool-password",
+                                  user_id=tool_keypair.to_tool_id(),
+                                  private_key=tool_keypair.private_key)
+
+            # Later, recover credentials with password
+            from reeeductio import opaque_login
+            credentials = opaque_login(base_url, space_id, "alice", "my-secure-password")
+        """
+        # Import from our local opaque module which wraps opaque_snake
+        from .opaque import opaque_register as _opaque_register
+
+        # Use provided values or derive from self.keypair
+        if user_id is None:
+            user_id = self.keypair.to_user_id()
+        if private_key is None:
+            private_key = self.keypair.private_key
+
+        return _opaque_register(
+            client=self.client,
+            space_id=self.space_id,
+            username=username,
+            password=password,
+            user_id=user_id,
+            private_key=private_key,
+            symmetric_root=self.symmetric_root,
+        )
+
+    def enable_opaque(self) -> dict[str, bool]:
+        """
+        Enable OPAQUE for this space.
+
+        Sets up the OPAQUE server configuration and creates the opaque-user role
+        with the necessary permissions. This must be called by an admin before
+        users can register OPAQUE credentials.
+
+        This method:
+        1. Creates OPAQUE server setup if it doesn't exist (stored in data)
+        2. Creates opaque-user role if it doesn't exist (stored in state)
+        3. Adds CREATE capability for opaque/users/{any} if missing
+
+        Returns:
+            Dict with keys indicating what was created:
+            - server_setup_created: True if new server setup was uploaded
+            - role_created: True if opaque-user role was created
+            - capability_created: True if CREATE capability was added
+
+        Raises:
+            OpaqueNotAvailableError: If opaque_snake is not installed
+            ValidationError: If operation fails (usually due to insufficient permissions)
+
+        Example:
+            # As space admin, enable OPAQUE
+            space = Space(space_id, admin_keypair, symmetric_root, base_url)
+            result = space.enable_opaque()
+            if result["server_setup_created"]:
+                print("OPAQUE server setup created")
+        """
+        from .opaque import enable_opaque as _enable_opaque
+
+        return _enable_opaque(
+            client=self.client,
+            space_id=self.space_id,
+            user_id=self.keypair.to_user_id(),
+            private_key=self.keypair.private_key,
+        )
+
 
 class AdminSpace(Space):
     """
@@ -1590,6 +1700,115 @@ class AsyncSpace:
             path=path,
             data=data,
             signed_by=self.keypair.to_user_id(),
+            private_key=self.keypair.private_key,
+        )
+
+    # ============================================================
+    # OPAQUE Password-Based Key Recovery
+    # ============================================================
+
+    async def opaque_register(
+        self,
+        username: str,
+        password: str,
+        user_id: str | None = None,
+        private_key: bytes | None = None,
+    ) -> str:
+        """
+        Register OPAQUE credentials for password-based login.
+
+        After registration, the user can recover their keypair and symmetric_root
+        by logging in with their username and password using opaque_login_async().
+
+        This method requires authentication (auto-authenticates if enabled).
+
+        Uses the opaque_snake library for the OPAQUE protocol.
+
+        Args:
+            username: OPAQUE username (must be unique within the space)
+            password: Password for future logins
+            user_id: Typed identifier string (USER or TOOL) for the public key.
+                If None, uses self.keypair.to_user_id().
+            private_key: 32-byte Ed25519 private key matching user_id.
+                If None, uses self.keypair.private_key.
+
+        Returns:
+            The username that was registered
+
+        Raises:
+            OpaqueNotAvailableError: If opaque_snake is not installed
+            OpaqueNotEnabledError: If OPAQUE is not enabled for this space
+            OpaqueError: If registration fails
+            ValidationError: If username already exists or user_id doesn't match private_key
+
+        Example:
+            async with AsyncSpace(space_id, keypair, symmetric_root, base_url) as space:
+                await space.opaque_register("alice", "my-secure-password")
+
+                # Register with a tool key
+                await space.opaque_register("tool-alice", "tool-password",
+                                            user_id=tool_keypair.to_tool_id(),
+                                            private_key=tool_keypair.private_key)
+
+            # Later, recover credentials with password
+            from reeeductio import opaque_login_async
+            credentials = await opaque_login_async(base_url, space_id, "alice", "my-secure-password")
+        """
+        from .opaque import opaque_register_async as _opaque_register_async
+
+        # Use provided values or derive from self.keypair
+        if user_id is None:
+            user_id = self.keypair.to_user_id()
+        if private_key is None:
+            private_key = self.keypair.private_key
+
+        client = await self.get_client()
+        return await _opaque_register_async(
+            client=client,
+            space_id=self.space_id,
+            username=username,
+            password=password,
+            user_id=user_id,
+            private_key=private_key,
+            symmetric_root=self.symmetric_root,
+        )
+
+    async def enable_opaque(self) -> dict[str, bool]:
+        """
+        Enable OPAQUE for this space.
+
+        Sets up the OPAQUE server configuration and creates the opaque-user role
+        with the necessary permissions. This must be called by an admin before
+        users can register OPAQUE credentials.
+
+        This method:
+        1. Creates OPAQUE server setup if it doesn't exist (stored in data)
+        2. Creates opaque-user role if it doesn't exist (stored in state)
+        3. Adds CREATE capability for opaque/users/{any} if missing
+
+        Returns:
+            Dict with keys indicating what was created:
+            - server_setup_created: True if new server setup was uploaded
+            - role_created: True if opaque-user role was created
+            - capability_created: True if CREATE capability was added
+
+        Raises:
+            OpaqueNotAvailableError: If opaque_snake is not installed
+            ValidationError: If operation fails (usually due to insufficient permissions)
+
+        Example:
+            async with AsyncSpace(space_id, admin_keypair, symmetric_root, base_url) as space:
+                result = await space.enable_opaque()
+                if result["server_setup_created"]:
+                    print("OPAQUE server setup created")
+        """
+        from .opaque import enable_opaque_async as _enable_opaque_async
+
+        client = await self.get_client()
+        return await _enable_opaque_async(
+            client=client,
+            space_id=self.space_id,
+            user_id=self.keypair.to_user_id(),
             private_key=self.keypair.private_key,
         )
 
