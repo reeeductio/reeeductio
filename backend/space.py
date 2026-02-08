@@ -790,6 +790,19 @@ class Space:
         # Get current timestamp (before db operations)
         server_timestamp = int(time.time() * 1000)
 
+        CLOCK_SKEW_THRESHOLD = 60_000 # 60 seconds
+        if server_timestamp - signed_at > CLOCK_SKEW_THRESHOLD:
+            raise ValueError("Signature is too far in the past")
+        if signed_at - server_timestamp > CLOCK_SKEW_THRESHOLD:
+            raise ValueError("Signature is too far in the future")
+
+        # Fetch the current data (if any) and verify that we're not replacing a newer version with an older one
+        current_data = self.data_store.get_data(self.space_id, path)
+        if current_data:
+            current_timestamp = current_data.get("signed_at", None)
+            if current_timestamp and current_timestamp > signed_at:
+                raise ValueError("Signature is older than current data - Possible replay attack")
+
         # Determine operation type based on data and existing contents
         if data:
             # Set/create operation - check if data exists
