@@ -52,6 +52,7 @@ def test_message_hashing(crypto):
     msg_hash = crypto.compute_message_hash(
         "space1",
         "general-chat",
+        "chat.text",
         None,
         "data",
         sender_id
@@ -72,6 +73,7 @@ def test_message_signature_verification(crypto):
     msg_hash = crypto.compute_message_hash(
         "space1",
         "general-chat",
+        "chat.text",
         None,
         "data",
         sender_id

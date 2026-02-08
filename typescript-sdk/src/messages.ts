@@ -38,6 +38,7 @@ import { createApiError } from './exceptions.js';
 export function computeMessageHash(
   spaceId: string,
   topicId: string,
+  msgType: string,
   prevHash: string | null,
   dataBase64: string,
   sender: string
@@ -45,7 +46,7 @@ export function computeMessageHash(
   // Hash is over: space_id|topic_id|prev_hash|data|sender
   // prev_hash is "null" when null, otherwise the actual hash
   const prevHashStr = prevHash ?? 'null';
-  const hashInput = stringToBytes(`${spaceId}|${topicId}|${prevHashStr}|${dataBase64}|${sender}`);
+  const hashInput = stringToBytes(`${spaceId}|${topicId}|${msgType}|${prevHashStr}|${dataBase64}|${sender}`);
 
   const hashBytes = computeHash(hashInput);
   return toMessageId(hashBytes);
@@ -85,6 +86,7 @@ export async function postMessage(
   const messageHash = computeMessageHash(
     spaceId,
     topicId,
+    msgType,
     prevHash,
     dataBase64,
     senderPublicKeyTyped
@@ -276,6 +278,7 @@ export function validateMessageChain(spaceId: string, messages: Message[]): bool
     const expectedHash = computeMessageHash(
       spaceId,
       msg.topic_id,
+      msg.type,
       msg.prev_hash,
       msg.data,
       msg.sender

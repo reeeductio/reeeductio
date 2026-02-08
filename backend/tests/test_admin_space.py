@@ -42,6 +42,7 @@ def set_space_state(space, path, contents, token, keypair):
     message_hash = crypto.compute_message_hash(
         space.space_id,
         "state",
+        path,
         prev_hash,
         data,
         keypair['id']

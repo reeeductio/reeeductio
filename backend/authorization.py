@@ -94,6 +94,7 @@ class AuthorizationEngine:
         expected_hash = self.crypto.compute_message_hash(
             space_id,
             "state",
+            state_entry["type"],
             state_entry["prev_hash"],
             state_entry["data"],
             state_entry["sender"]

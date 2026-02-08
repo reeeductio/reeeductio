@@ -24,7 +24,7 @@ describe('computeMessageHash', () => {
     const dataBase64 = encodeBase64(stringToBytes('Hello, World!'));
     const prevHash = null;
 
-    const hash = computeMessageHash(spaceId, topicId, prevHash, dataBase64, senderId);
+    const hash = computeMessageHash(spaceId, topicId, 'text', prevHash, dataBase64, senderId);
 
     // Returns a typed message ID string (44 chars starting with 'M')
     expect(typeof hash).toBe('string');
@@ -40,8 +40,8 @@ describe('computeMessageHash', () => {
     const dataBase64 = encodeBase64(stringToBytes('Hello, World!'));
     const prevHash = null;
 
-    const hash1 = computeMessageHash(spaceId, topicId, prevHash, dataBase64, senderId);
-    const hash2 = computeMessageHash(spaceId, topicId, prevHash, dataBase64, senderId);
+    const hash1 = computeMessageHash(spaceId, topicId, 'text', prevHash, dataBase64, senderId);
+    const hash2 = computeMessageHash(spaceId, topicId, 'text', prevHash, dataBase64, senderId);
 
     expect(hash1).toBe(hash2);
   });
@@ -56,8 +56,8 @@ describe('computeMessageHash', () => {
     // Use a fake prev_hash that looks valid
     const prevHash = 'M' + 'a'.repeat(43);
 
-    const hashWithPrev = computeMessageHash(spaceId, topicId, prevHash, dataBase64, senderId);
-    const hashWithoutPrev = computeMessageHash(spaceId, topicId, null, dataBase64, senderId);
+    const hashWithPrev = computeMessageHash(spaceId, topicId, 'text', prevHash, dataBase64, senderId);
+    const hashWithoutPrev = computeMessageHash(spaceId, topicId, 'text', null, dataBase64, senderId);
 
     expect(hashWithPrev).not.toBe(hashWithoutPrev);
   });
@@ -68,8 +68,8 @@ describe('computeMessageHash', () => {
     const senderId = toUserId(keyPair.publicKey);
     const dataBase64 = encodeBase64(stringToBytes('Hello'));
 
-    const hash1 = computeMessageHash(spaceId, 'topic1', null, dataBase64, senderId);
-    const hash2 = computeMessageHash(spaceId, 'topic2', null, dataBase64, senderId);
+    const hash1 = computeMessageHash(spaceId, 'topic1', 'text', null, dataBase64, senderId);
+    const hash2 = computeMessageHash(spaceId, 'topic2', 'text', null, dataBase64, senderId);
 
     expect(hash1).not.toBe(hash2);
   });
@@ -82,8 +82,8 @@ describe('computeMessageHash', () => {
     const senderId = toUserId(keyPair1.publicKey);
     const dataBase64 = encodeBase64(stringToBytes('Hello'));
 
-    const hash1 = computeMessageHash(spaceId1, 'topic', null, dataBase64, senderId);
-    const hash2 = computeMessageHash(spaceId2, 'topic', null, dataBase64, senderId);
+    const hash1 = computeMessageHash(spaceId1, 'topic', 'text', null, dataBase64, senderId);
+    const hash2 = computeMessageHash(spaceId2, 'topic', 'text', null, dataBase64, senderId);
 
     expect(hash1).not.toBe(hash2);
   });
@@ -329,10 +329,10 @@ describe('validateMessageChain', () => {
 
     // Create a chain of messages
     const data1Base64 = encodeBase64(stringToBytes('First'));
-    const messageId1 = computeMessageHash(spaceId, 'chat', null, data1Base64, senderId);
+    const messageId1 = computeMessageHash(spaceId, 'chat', 'text', null, data1Base64, senderId);
 
     const data2Base64 = encodeBase64(stringToBytes('Second'));
-    const messageId2 = computeMessageHash(spaceId, 'chat', messageId1, data2Base64, senderId);
+    const messageId2 = computeMessageHash(spaceId, 'chat', 'text', messageId1, data2Base64, senderId);
 
     const messages = [
       {
@@ -392,11 +392,11 @@ describe('validateMessageChain', () => {
     const senderId = toUserId(keyPair.publicKey);
 
     const data1Base64 = encodeBase64(stringToBytes('First'));
-    const messageId1 = computeMessageHash(spaceId, 'chat', null, data1Base64, senderId);
+    const messageId1 = computeMessageHash(spaceId, 'chat', 'text', null, data1Base64, senderId);
 
     const data2Base64 = encodeBase64(stringToBytes('Second'));
     const wrongPrevHash = 'M' + 'y'.repeat(43); // Wrong prev_hash
-    const messageId2 = computeMessageHash(spaceId, 'chat', wrongPrevHash, data2Base64, senderId);
+    const messageId2 = computeMessageHash(spaceId, 'chat', 'text', wrongPrevHash, data2Base64, senderId);
 
     const messages = [
       {
@@ -438,7 +438,7 @@ describe('validateMessageChain', () => {
     const senderId = toUserId(keyPair.publicKey);
 
     const dataBase64 = encodeBase64(stringToBytes('Only message'));
-    const messageId = computeMessageHash(spaceId, 'chat', null, dataBase64, senderId);
+    const messageId = computeMessageHash(spaceId, 'chat', 'text', null, dataBase64, senderId);
 
     const messages = [
       {

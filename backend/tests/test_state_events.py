@@ -202,6 +202,7 @@ def test_post_message_unauthorized_state_modification(unique_space, message_stor
     # Compute message hash
     message_hash = unique_space.compute_message_hash(
         topic_id="state",
+        msg_type=path,
         prev_hash=None,
         data=data_b64,
         sender=user_id

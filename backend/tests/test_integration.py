@@ -60,7 +60,7 @@ def test_end_to_end_workflow(unique_space, unique_admin_keypair, user_keypair):
     # Compute message hash with sender
     crypto = CryptoUtils()
     msg_hash = crypto.compute_message_hash(
-        space_id, "general-chat", None, "encrypted_content", user_id
+        space_id, "general-chat", "chat.text", None, "encrypted_content", user_id
     )
 
     # Sign the message hash (sign the full typed identifier bytes)

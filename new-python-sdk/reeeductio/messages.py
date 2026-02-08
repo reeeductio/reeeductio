@@ -22,6 +22,7 @@ from .models import Message, MessageCreated
 def compute_message_hash(
     space_id: str,
     topic_id: str,
+    msg_type: str,
     prev_hash: str | None,
     data_b64: str,
     sender: str,
@@ -29,11 +30,12 @@ def compute_message_hash(
     """
     Compute message hash for chain validation.
 
-    Hash is computed over: space_id|topic_id|prev_hash|data_b64|sender
+    Hash is computed over: space_id|topic_id|msg_type|prev_hash|data_b64|sender
 
     Args:
         space_id: Typed space identifier
         topic_id: Topic identifier
+        msg_type: Message type (or state path for state messages)
         prev_hash: Typed hash of previous message (None for first message)
         data_b64: Base64-encoded message data
         sender: Typed sender identifier
@@ -42,7 +44,7 @@ def compute_message_hash(
         Typed message hash (44-char base64)
     """
     prev_hash_str = prev_hash if prev_hash else "null"
-    hash_input = f"{space_id}|{topic_id}|{prev_hash_str}|{data_b64}|{sender}".encode()
+    hash_input = f"{space_id}|{topic_id}|{msg_type}|{prev_hash_str}|{data_b64}|{sender}".encode()
 
     hash_bytes = compute_hash(hash_input)
     return to_message_id(hash_bytes)
@@ -86,6 +88,7 @@ def post_message(
     message_hash = compute_message_hash(
         space_id=space_id,
         topic_id=topic_id,
+        msg_type=msg_type,
         prev_hash=prev_hash,
         data_b64=data_b64,
         sender=sender_public_key_typed,
@@ -158,6 +161,7 @@ async def post_message_async(
     message_hash = compute_message_hash(
         space_id=space_id,
         topic_id=topic_id,
+        msg_type=msg_type,
         prev_hash=prev_hash,
         data_b64=data_b64,
         sender=sender_public_key_typed,
@@ -269,6 +273,7 @@ def validate_message_chain(space_id: str, messages: list[Message]) -> bool:
         expected_hash = compute_message_hash(
             space_id=space_id,
             topic_id=msg.topic_id,
+            msg_type=msg.type,
             prev_hash=msg.prev_hash,
             data_b64=msg.data,
             sender=msg.sender,

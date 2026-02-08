@@ -72,6 +72,7 @@ class CryptoUtils:
         self,
         space_id: str,
         topic_id: str,
+        msg_type: str,
         prev_hash: Optional[str],
         data: str,
         sender: str
@@ -85,6 +86,7 @@ class CryptoUtils:
         Args:
             space_id: Typed space identifier (44 chars)
             topic_id: Topic identifier string
+            msg_type: Message type (state path for state messages)
             prev_hash: Typed message identifier of previous message (or None)
             data: Base64-encoded message content
             sender: Typed user identifier (44 chars)
@@ -96,7 +98,7 @@ class CryptoUtils:
         prev_hash_str = prev_hash if prev_hash else "null"
 
         message_data = (
-            f"{space_id}|{topic_id}|{prev_hash_str}|{data}|{sender}"
+            f"{space_id}|{topic_id}|{msg_type}|{prev_hash_str}|{data}|{sender}"
         )
 
         # Compute SHA256

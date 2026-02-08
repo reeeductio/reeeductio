@@ -214,7 +214,7 @@ class TestWebSocketMessageBroadcasting:
         topic_id = "general-chat"
         data = "encrypted_content"
         msg_hash = crypto.compute_message_hash(
-            space_id, topic_id, None, data, admin_id
+            space_id, topic_id, "chat.text", None, data, admin_id
         )
         signature = crypto.base64_encode(
             admin_private.sign(msg_hash.encode('utf-8'))

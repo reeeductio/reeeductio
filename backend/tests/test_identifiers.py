@@ -107,6 +107,7 @@ def test_crypto_integration(crypto):
     message_hash = crypto.compute_message_hash(
         space_id,
         topic,
+        "test",  # msg_type
         None,  # First message
         payload,
         sender_id

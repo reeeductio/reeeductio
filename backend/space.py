@@ -568,7 +568,7 @@ class Space:
             raise ValueError("No post permission")
 
         # Validate message hash
-        expected_hash = self.compute_message_hash(topic_id, prev_hash, data, sender)
+        expected_hash = self.compute_message_hash(topic_id, msg_type, prev_hash, data, sender)
         if expected_hash != message_hash:
             raise ValueError("Message hash mismatch")
 
@@ -1626,6 +1626,7 @@ class Space:
     def compute_message_hash(
         self,
         topic_id: str,
+        msg_type: str,
         prev_hash: Optional[str],
         data: str,
         sender: str
@@ -1634,6 +1635,7 @@ class Space:
         return self.crypto.compute_message_hash(
             self.space_id,
             topic_id,
+            msg_type,
             prev_hash,
             data,
             sender

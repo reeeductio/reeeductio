@@ -170,6 +170,7 @@ def test_unauthorized_user_insertion_rejected(unique_space, unique_admin_keypair
     message_hash = crypto.compute_message_hash(
         space_id,
         "state",
+        path,
         prev_hash,
         data,
         attacker_id  # Attacker signs their own message
@@ -226,7 +227,7 @@ def test_capabilities_rejected_for_untrusted_user(unique_space, unique_admin_key
     def insert_attacker_message(path, contents):
         nonlocal prev_hash
         data = crypto.base64_encode_object(contents)
-        message_hash = crypto.compute_message_hash(space_id, "state", prev_hash, data, attacker_id)
+        message_hash = crypto.compute_message_hash(space_id, "state", path, prev_hash, data, attacker_id)
         message_tid = decode_identifier(message_hash)
         signature_bytes = attacker_private.sign(message_tid.to_bytes())
         signature = base64.b64encode(signature_bytes).decode('utf-8')
@@ -284,7 +285,7 @@ def test_tool_capabilities_rejected_for_untrusted_tool(unique_space, unique_admi
     def insert_attacker_message(path, contents):
         nonlocal prev_hash
         data = crypto.base64_encode_object(contents)
-        message_hash = crypto.compute_message_hash(space_id, "state", prev_hash, data, attacker_tool_id)
+        message_hash = crypto.compute_message_hash(space_id, "state", path, prev_hash, data, attacker_tool_id)
         message_tid = decode_identifier(message_hash)
         signature_bytes = attacker_tool_private.sign(message_tid.to_bytes())
         signature = base64.b64encode(signature_bytes).decode('utf-8')
