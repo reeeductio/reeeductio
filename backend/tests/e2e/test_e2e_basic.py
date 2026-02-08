@@ -166,6 +166,7 @@ class TestMessages:
         message_hash = crypto.compute_message_hash(
             space_id,
             topic_id,
+            "chat.text",  # msg_type
             None,  # prev_hash
             data_b64,
             user_id
@@ -233,6 +234,7 @@ class TestState:
         message_hash = crypto.compute_message_hash(
             space_id,
             "state",
+            path,  # msg_type (for state messages, this is the path)
             None,  # prev_hash
             data_b64,
             user_id
