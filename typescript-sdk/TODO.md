@@ -1,1 +1,1 @@
-1. Add support for new OPAQUE endpoints
+1. ~~Add support for new OPAQUE endpoints~~
