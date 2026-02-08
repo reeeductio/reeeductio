@@ -171,6 +171,7 @@ describe('downloadBlob', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
+      headers: { get: () => 'application/octet-stream' },
       arrayBuffer: async () => blobData.buffer,
     });
 
