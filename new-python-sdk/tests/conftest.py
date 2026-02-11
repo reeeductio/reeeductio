@@ -140,3 +140,43 @@ def space_id(fresh_keypair: Ed25519KeyPair) -> str:
 def base_url() -> str:
     """Backend base URL."""
     return E2E_BASE_URL
+
+
+# Admin symmetric root (consistent across session for the admin space)
+ADMIN_SYMMETRIC_ROOT = b"\x02" * 32
+
+
+@pytest.fixture(scope="session")
+def admin_symmetric_root() -> bytes:
+    """Consistent symmetric root for admin space operations."""
+    return ADMIN_SYMMETRIC_ROOT
+
+
+@pytest.fixture(scope="session")
+def cli_created_space(_e2e_backend) -> dict:
+    """Create a space via CLI once per session and cache the credentials.
+
+    Returns a dict with: space_id, private_key_hex, public_key_hex, symmetric_root_hex
+    """
+    import json
+    from click.testing import CliRunner
+    from reeeductio.cli.main import cli
+
+    runner = CliRunner()
+    admin_keypair = _keypair_from_private(ADMIN_PRIVATE_KEY)
+
+    result = runner.invoke(
+        cli,
+        [
+            "--base-url", E2E_BASE_URL,
+            "space", "create",
+            "-k", admin_keypair.private_key.hex(),
+            "-s", ADMIN_SYMMETRIC_ROOT.hex(),
+            "--output-format", "json",
+        ],
+    )
+
+    if result.exit_code != 0:
+        pytest.fail(f"Failed to create space via CLI: {result.output}")
+
+    return json.loads(result.output)

@@ -246,6 +246,32 @@ async def get_messages_async(
         raise ValidationError(f"Failed to get messages: {e}") from e
 
 
+def verify_message_hash(space_id: str, msg: Message) -> bool:
+    """
+    Verify that a message's hash matches its content.
+
+    Args:
+        space_id: Typed space identifier
+        msg: Message to verify
+
+    Returns:
+        True if hash is valid, False otherwise
+    """
+    if msg.data is None:
+        return True  # Can't verify without data
+
+    expected_hash = compute_message_hash(
+        space_id=space_id,
+        topic_id=msg.topic_id,
+        msg_type=msg.type,
+        prev_hash=msg.prev_hash,
+        data_b64=msg.data,
+        sender=msg.sender,
+    )
+
+    return msg.message_hash == expected_hash
+
+
 def validate_message_chain(space_id: str, messages: list[Message]) -> bool:
     """
     Validate that a list of messages forms a valid chain.
@@ -270,6 +296,60 @@ def validate_message_chain(space_id: str, messages: list[Message]) -> bool:
             continue
 
         # Verify message hash — msg.data is already base64-encoded
+        expected_hash = compute_message_hash(
+            space_id=space_id,
+            topic_id=msg.topic_id,
+            msg_type=msg.type,
+            prev_hash=msg.prev_hash,
+            data_b64=msg.data,
+            sender=msg.sender,
+        )
+
+        if msg.message_hash != expected_hash:
+            return False
+
+        prev_hash = msg.message_hash
+
+    return True
+
+
+def validate_message_chain_with_anchor(
+    space_id: str,
+    messages: list[Message],
+    anchor_hash: str | None,
+) -> bool:
+    """
+    Validate that a list of messages forms a valid chain starting from an anchor.
+
+    Args:
+        space_id: Typed space identifier
+        messages: List of Message objects in chronological order
+        anchor_hash: Expected prev_hash of the first message (None for topic start)
+
+    Returns:
+        True if chain is valid, False otherwise
+    """
+    if not messages:
+        return True
+
+    # First message must link to anchor
+    if messages[0].prev_hash != anchor_hash:
+        return False
+
+    # Validate the chain starting from the anchor
+    prev_hash = anchor_hash
+
+    for msg in messages:
+        # Check that prev_hash matches
+        if msg.prev_hash != prev_hash:
+            return False
+
+        # Skip validation if data is missing
+        if msg.data is None:
+            prev_hash = msg.message_hash
+            continue
+
+        # Verify message hash
         expected_hash = compute_message_hash(
             space_id=space_id,
             topic_id=msg.topic_id,

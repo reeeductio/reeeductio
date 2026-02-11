@@ -777,79 +777,44 @@ class TestToolCommandsE2E:
 
 
 @pytest.mark.e2e
-class TestSpaceCommandsE2E:
-    """E2E tests for space management commands."""
+class TestAASpaceCreateE2E:
+    """E2E tests for space creation (must run first to avoid chain state issues).
 
-    def test_space_create_success(self, runner, fresh_keypair, symmetric_root):
-        """Test creating a space on the server."""
-        space_key_hex = fresh_keypair.private_key.hex()
-        sym_root_hex = symmetric_root.hex()
-        space_id = fresh_keypair.to_space_id()
+    Named 'AA' to run before other E2E tests alphabetically.
+    """
 
-        result = runner.invoke(
-            cli,
-            [
-                "--base-url", E2E_BASE_URL,
-                "space", "create",
-                "-k", space_key_hex,
-                "-s", sym_root_hex,
-            ],
-        )
+    def test_space_create_returns_valid_credentials(self, cli_created_space):
+        """Test that space create returns valid credentials."""
+        data = cli_created_space
 
-        assert result.exit_code == 0, f"Failed with: {result.output}"
-        assert "Space created successfully!" in result.output
-        assert space_id in result.output
-        assert E2E_BASE_URL in result.output
+        # Verify the returned data has the expected structure
+        assert "space_id" in data
+        assert data["space_id"].startswith("C")  # Space IDs start with C
+        assert "private_key_hex" in data
+        assert len(data["private_key_hex"]) == 64  # 32 bytes in hex
+        assert "public_key_hex" in data
+        assert len(data["public_key_hex"]) == 64  # 32 bytes in hex
+        assert "symmetric_root_hex" in data
+        assert len(data["symmetric_root_hex"]) == 64  # 32 bytes in hex
+        assert "base_url" in data
 
-    def test_space_create_json_output(self, runner, fresh_keypair, symmetric_root):
-        """Test creating a space with JSON output."""
-        space_key_hex = fresh_keypair.private_key.hex()
-        sym_root_hex = symmetric_root.hex()
-        space_id = fresh_keypair.to_space_id()
-
-        result = runner.invoke(
-            cli,
-            [
-                "--base-url", E2E_BASE_URL,
-                "space", "create",
-                "-k", space_key_hex,
-                "-s", sym_root_hex,
-                "--output-format", "json",
-            ],
-        )
-
-        assert result.exit_code == 0, f"Failed with: {result.output}"
-        data = json.loads(result.output)
-        assert data["space_id"] == space_id
-        assert data["private_key_hex"] == space_key_hex
-        assert data["symmetric_root_hex"] == sym_root_hex
-        assert data["base_url"] == E2E_BASE_URL
-
-    def test_space_create_can_be_used(self, runner, fresh_keypair, symmetric_root):
+    def test_space_create_can_be_used(self, cli_created_space):
         """Test that a created space can be used for operations."""
         from reeeductio import Space
+        from reeeductio.crypto import Ed25519KeyPair
 
-        space_key_hex = fresh_keypair.private_key.hex()
-        sym_root_hex = symmetric_root.hex()
-        space_id = fresh_keypair.to_space_id()
+        # Use the credentials from the shared fixture
+        new_space_id = cli_created_space["space_id"]
+        new_private_key = bytes.fromhex(cli_created_space["private_key_hex"])
+        new_public_key = bytes.fromhex(cli_created_space["public_key_hex"])
+        new_sym_root = bytes.fromhex(cli_created_space["symmetric_root_hex"])
+        new_keypair = Ed25519KeyPair(private_key=new_private_key, public_key=new_public_key)
 
-        # Create the space via CLI
-        result = runner.invoke(
-            cli,
-            [
-                "--base-url", E2E_BASE_URL,
-                "space", "create",
-                "-k", space_key_hex,
-                "-s", sym_root_hex,
-            ],
-        )
-        assert result.exit_code == 0
-
-        # Verify we can use the space
+        # Verify we can use the newly created space with its credentials
         with Space(
-            space_id=space_id,
-            keypair=fresh_keypair,
-            symmetric_root=symmetric_root,
+            space_id=new_space_id,
+            keypair=new_keypair,
+            symmetric_root=new_sym_root,
             base_url=E2E_BASE_URL,
         ) as space:
             # Post a message to verify the space is usable

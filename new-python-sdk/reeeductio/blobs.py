@@ -11,7 +11,7 @@ from io import BytesIO
 import httpx
 
 from .crypto import compute_hash, to_blob_id
-from .exceptions import BlobError
+from .exceptions import BlobError, NotFoundError
 from .models import BlobCreated
 
 
@@ -197,6 +197,8 @@ def download_blob(
         # Direct download (server returned the blob content)
         return response.content
     except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise NotFoundError(f"Blob not found: {blob_id}") from e
         raise BlobError(f"Failed to download blob: {e.response.text}") from e
     except Exception as e:
         raise BlobError(f"Failed to download blob: {e}") from e
@@ -239,6 +241,8 @@ async def download_blob_async(
         # Direct download (server returned the blob content)
         return response.content
     except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise NotFoundError(f"Blob not found: {blob_id}") from e
         raise BlobError(f"Failed to download blob: {e.response.text}") from e
     except Exception as e:
         raise BlobError(f"Failed to download blob: {e}") from e

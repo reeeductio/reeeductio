@@ -6,6 +6,7 @@ A clean, modern SDK for end-to-end encrypted messaging with capability-based aut
 
 from .auth import AsyncAuthSession, AuthSession
 from .client import AdminClient, AsyncAdminClient, AsyncSpace, Space
+from .local_store import LocalMessageStore
 from .crypto import (
     Ed25519KeyPair,
     compute_hash,
@@ -66,6 +67,8 @@ __all__ = [
     # Admin clients
     "AdminClient",
     "AsyncAdminClient",
+    # Local storage
+    "LocalMessageStore",
     # Authentication
     "AuthSession",
     "AsyncAuthSession",

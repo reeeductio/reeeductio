@@ -21,7 +21,9 @@ from websockets.asyncio.client import ClientConnection
 from . import blobs, kvdata, messages, state
 from .auth import AsyncAuthSession, AuthSession
 from .crypto import Ed25519KeyPair, decrypt_aes_gcm, encrypt_aes_gcm, derive_key
-from .exceptions import NotFoundError, StreamError, ValidationError
+from .exceptions import ChainError, NotFoundError, StreamError, ValidationError
+from .messages import validate_message_chain_with_anchor, verify_message_hash
+from .local_store import LocalMessageStore
 from .models import BlobCreated, DataEntry, Message, MessageCreated
 
 
@@ -51,6 +53,7 @@ class Space:
         symmetric_root: bytes,
         base_url: str = "http://localhost:8000",
         auto_authenticate: bool = True,
+        local_store: LocalMessageStore | None = None,
     ):
         """
         Initialize Space client.
@@ -61,6 +64,8 @@ class Space:
             symmetric_root: 256-bit (32-byte) root key for HKDF key derivation
             base_url: Base URL of the reeeductio server
             auto_authenticate: Whether to authenticate automatically on first request
+            local_store: Optional local message store for caching. When provided,
+                messages are cached locally and retrieved from cache when available.
 
         Raises:
             ValueError: If symmetric_root is not exactly 32 bytes
@@ -73,6 +78,7 @@ class Space:
         self.symmetric_root = symmetric_root
         self.base_url = base_url
         self._auto_authenticate = auto_authenticate
+        self._local_store = local_store
 
         # Derive encryption keys from symmetric_root using HKDF
         # Include space_id in info for domain separation (prevents key reuse across spaces)
@@ -317,19 +323,203 @@ class Space:
         from_timestamp: int | None = None,
         to_timestamp: int | None = None,
         limit: int = 100,
+        use_cache: bool = True,
+        validate_chain: bool = True,
     ) -> list[Message]:
         """
         Get messages from a topic.
+
+        When a local_store is configured and use_cache is True, this method:
+        1. Checks if cached data might be stale (to_timestamp > latest cached)
+        2. Fetches newer messages from server if needed
+        3. Validates message hashes and chain integrity
+        4. Fetches gap-filling messages if there's a gap between cached and new
+        5. Merges server results with cached data
+        6. Caches any new messages
 
         Args:
             topic_id: Topic identifier
             from_timestamp: Optional start timestamp (milliseconds)
             to_timestamp: Optional end timestamp (milliseconds)
             limit: Maximum number of messages to return
+            use_cache: Whether to use local cache (default True)
+            validate_chain: Whether to validate chain integrity (default True)
 
         Returns:
             List of messages
+
+        Raises:
+            ChainError: If chain validation fails
         """
+        if not use_cache or self._local_store is None:
+            server_messages = self._fetch_messages_from_server(
+                topic_id, from_timestamp, to_timestamp, limit
+            )
+            if validate_chain and server_messages:
+                self._validate_and_verify_messages(topic_id, server_messages)
+            return server_messages
+
+        # Get cached messages and latest cached timestamp
+        cached = self._local_store.get_messages(
+            self.space_id, topic_id, from_timestamp, to_timestamp, limit
+        )
+        latest_cached_ts = self._local_store.get_latest_timestamp(self.space_id, topic_id)
+
+        # Determine if we need to fetch from server
+        need_server_fetch = (
+            to_timestamp is None
+            or latest_cached_ts is None
+            or to_timestamp > latest_cached_ts
+        )
+
+        if not need_server_fetch and cached:
+            return cached
+
+        # Fetch from server - either everything or just newer messages
+        server_from = from_timestamp
+        if latest_cached_ts is not None and cached:
+            server_from = latest_cached_ts + 1
+
+        server_messages = self._fetch_messages_from_server(
+            topic_id, server_from, to_timestamp, limit
+        )
+
+        if not server_messages:
+            return cached
+
+        # Validate hashes of all new messages
+        if validate_chain:
+            for msg in server_messages:
+                if not verify_message_hash(self.space_id, msg):
+                    raise ChainError(
+                        f"Message hash verification failed for {msg.message_hash}"
+                    )
+
+        # Check for gap between cached and new messages
+        # The oldest new message's prev_hash should either:
+        # 1. Be None (start of topic)
+        # 2. Match the latest cached message's hash
+        # 3. Otherwise, we have a gap that needs filling
+        if validate_chain and cached:
+            server_messages.sort(key=lambda m: m.server_timestamp)
+            oldest_new = server_messages[0]
+            latest_cached = max(cached, key=lambda m: m.server_timestamp)
+
+            if oldest_new.prev_hash is not None and oldest_new.prev_hash != latest_cached.message_hash:
+                # Gap detected - fetch missing messages
+                gap_messages = self._fetch_gap_messages(
+                    topic_id, latest_cached.message_hash, oldest_new.prev_hash
+                )
+                if gap_messages:
+                    server_messages = gap_messages + server_messages
+
+        # Validate chain integrity if we have both cached and new messages
+        if validate_chain and cached and server_messages:
+            latest_cached = max(cached, key=lambda m: m.server_timestamp)
+            if not validate_message_chain_with_anchor(
+                self.space_id, server_messages, latest_cached.message_hash
+            ):
+                # Check if chain starts from beginning (prev_hash is None)
+                server_messages.sort(key=lambda m: m.server_timestamp)
+                if server_messages[0].prev_hash is not None:
+                    raise ChainError(
+                        f"Chain validation failed: new messages don't link to cached chain"
+                    )
+
+        # Cache new messages (they've been validated)
+        self._local_store.put_messages(self.space_id, server_messages)
+
+        # Merge cached and server messages, deduplicate by hash
+        seen_hashes = set()
+        merged = []
+        for msg in cached + server_messages:
+            if msg.message_hash not in seen_hashes:
+                seen_hashes.add(msg.message_hash)
+                merged.append(msg)
+        merged.sort(key=lambda m: m.server_timestamp)
+        return merged[:limit]
+
+    def _validate_and_verify_messages(
+        self, topic_id: str, messages_list: list[Message]
+    ) -> None:
+        """Validate message hashes and chain for messages without cache."""
+        for msg in messages_list:
+            if not verify_message_hash(self.space_id, msg):
+                raise ChainError(
+                    f"Message hash verification failed for {msg.message_hash}"
+                )
+
+        # Validate chain links back to start or is internally consistent
+        messages_list.sort(key=lambda m: m.server_timestamp)
+        if messages_list:
+            # First message should link to something we trust or be the start
+            anchor = messages_list[0].prev_hash
+            if not validate_message_chain_with_anchor(self.space_id, messages_list, anchor):
+                raise ChainError("Chain validation failed: messages don't form valid chain")
+
+    def _fetch_gap_messages(
+        self,
+        topic_id: str,
+        cached_head_hash: str,
+        target_prev_hash: str,
+        max_iterations: int = 10,
+    ) -> list[Message]:
+        """
+        Fetch messages to fill gap between cached head and new messages.
+
+        Walks backwards from target_prev_hash until we reach cached_head_hash
+        or the start of the topic.
+
+        Args:
+            topic_id: Topic identifier
+            cached_head_hash: Hash of our latest cached message
+            target_prev_hash: prev_hash of the oldest new message
+            max_iterations: Maximum fetch iterations to prevent infinite loops
+
+        Returns:
+            List of gap-filling messages in chronological order
+        """
+        gap_messages = []
+        current_hash = target_prev_hash
+
+        for _ in range(max_iterations):
+            if current_hash is None or current_hash == cached_head_hash:
+                break
+
+            # Fetch the message by hash
+            try:
+                msg = self._fetch_message_by_hash(topic_id, current_hash)
+                if msg is None:
+                    break
+                gap_messages.insert(0, msg)  # Prepend to maintain order
+                current_hash = msg.prev_hash
+            except Exception:
+                break
+
+        return gap_messages
+
+    def _fetch_message_by_hash(self, topic_id: str, message_hash: str) -> Message | None:
+        """Fetch a single message by hash from server."""
+        try:
+            response = self.client.get(
+                f"/spaces/{self.space_id}/topics/{topic_id}/messages/{message_hash}"
+            )
+            response.raise_for_status()
+            data = response.json()
+            return Message(**data)
+        except httpx.HTTPStatusError:
+            return None
+        except Exception:
+            return None
+
+    def _fetch_messages_from_server(
+        self,
+        topic_id: str,
+        from_timestamp: int | None = None,
+        to_timestamp: int | None = None,
+        limit: int = 100,
+    ) -> list[Message]:
+        """Fetch messages directly from server without caching."""
         try:
             params = {"limit": limit}
             if from_timestamp is not None:
@@ -349,13 +539,14 @@ class Space:
         except Exception as e:
             raise ValidationError(f"Failed to get messages: {e}") from e
 
-    def get_message(self, topic_id: str, message_hash: str) -> Message:
+    def get_message(self, topic_id: str, message_hash: str, use_cache: bool = True) -> Message:
         """
         Get a specific message by hash.
 
         Args:
             topic_id: Topic identifier
             message_hash: Typed message identifier (44-char base64)
+            use_cache: Whether to use local cache (default True)
 
         Returns:
             Message
@@ -363,11 +554,24 @@ class Space:
         Raises:
             NotFoundError: If message not found
         """
+        # Check local cache first
+        if use_cache and self._local_store is not None:
+            cached = self._local_store.get_message(self.space_id, topic_id, message_hash)
+            if cached is not None:
+                return cached
+
+        # Fetch from server
         try:
             response = self.client.get(f"/spaces/{self.space_id}/topics/{topic_id}/messages/{message_hash}")
             response.raise_for_status()
             data = response.json()
-            return Message(**data)
+            message = Message(**data)
+
+            # Cache the message
+            if use_cache and self._local_store is not None:
+                self._local_store.put_message(self.space_id, message)
+
+            return message
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 raise NotFoundError(f"Message not found: {message_hash}") from e
@@ -1448,6 +1652,7 @@ class AsyncSpace:
         symmetric_root: bytes,
         base_url: str = "http://localhost:8000",
         auto_authenticate: bool = True,
+        local_store: LocalMessageStore | None = None,
     ):
         """
         Initialize AsyncSpace client.
@@ -1458,6 +1663,8 @@ class AsyncSpace:
             symmetric_root: 256-bit (32-byte) root key for HKDF key derivation
             base_url: Base URL of the reeeductio server
             auto_authenticate: Whether to authenticate automatically on first request
+            local_store: Optional local message store for caching. When provided,
+                messages are cached locally and retrieved from cache when available.
 
         Raises:
             ValueError: If symmetric_root is not exactly 32 bytes
@@ -1470,6 +1677,7 @@ class AsyncSpace:
         self.symmetric_root = symmetric_root
         self.base_url = base_url
         self._auto_authenticate = auto_authenticate
+        self._local_store = local_store
 
         # Derive encryption keys from symmetric_root using HKDF
         self.message_key = derive_key(symmetric_root, f"message key | {space_id}")
@@ -1652,19 +1860,187 @@ class AsyncSpace:
         from_timestamp: int | None = None,
         to_timestamp: int | None = None,
         limit: int = 100,
+        use_cache: bool = True,
+        validate_chain: bool = True,
     ) -> list[Message]:
         """
         Get messages from a topic.
+
+        When a local_store is configured and use_cache is True, this method:
+        1. Checks if cached data might be stale (to_timestamp > latest cached)
+        2. Fetches newer messages from server if needed
+        3. Validates message hashes and chain integrity
+        4. Fetches gap-filling messages if there's a gap between cached and new
+        5. Merges server results with cached data
+        6. Caches any new messages
 
         Args:
             topic_id: Topic identifier
             from_timestamp: Optional start timestamp (milliseconds)
             to_timestamp: Optional end timestamp (milliseconds)
             limit: Maximum number of messages to return
+            use_cache: Whether to use local cache (default True)
+            validate_chain: Whether to validate chain integrity (default True)
 
         Returns:
             List of messages
+
+        Raises:
+            ChainError: If chain validation fails
         """
+        if not use_cache or self._local_store is None:
+            server_messages = await self._fetch_messages_from_server(
+                topic_id, from_timestamp, to_timestamp, limit
+            )
+            if validate_chain and server_messages:
+                self._validate_and_verify_messages(topic_id, server_messages)
+            return server_messages
+
+        # Get cached messages and latest cached timestamp
+        cached = self._local_store.get_messages(
+            self.space_id, topic_id, from_timestamp, to_timestamp, limit
+        )
+        latest_cached_ts = self._local_store.get_latest_timestamp(self.space_id, topic_id)
+
+        # Determine if we need to fetch from server
+        need_server_fetch = (
+            to_timestamp is None
+            or latest_cached_ts is None
+            or to_timestamp > latest_cached_ts
+        )
+
+        if not need_server_fetch and cached:
+            return cached
+
+        # Fetch from server - either everything or just newer messages
+        server_from = from_timestamp
+        if latest_cached_ts is not None and cached:
+            server_from = latest_cached_ts + 1
+
+        server_messages = await self._fetch_messages_from_server(
+            topic_id, server_from, to_timestamp, limit
+        )
+
+        if not server_messages:
+            return cached
+
+        # Validate hashes of all new messages
+        if validate_chain:
+            for msg in server_messages:
+                if not verify_message_hash(self.space_id, msg):
+                    raise ChainError(
+                        f"Message hash verification failed for {msg.message_hash}"
+                    )
+
+        # Check for gap between cached and new messages
+        if validate_chain and cached:
+            server_messages.sort(key=lambda m: m.server_timestamp)
+            oldest_new = server_messages[0]
+            latest_cached = max(cached, key=lambda m: m.server_timestamp)
+
+            if oldest_new.prev_hash is not None and oldest_new.prev_hash != latest_cached.message_hash:
+                # Gap detected - fetch missing messages
+                gap_messages = await self._fetch_gap_messages(
+                    topic_id, latest_cached.message_hash, oldest_new.prev_hash
+                )
+                if gap_messages:
+                    server_messages = gap_messages + server_messages
+
+        # Validate chain integrity if we have both cached and new messages
+        if validate_chain and cached and server_messages:
+            latest_cached = max(cached, key=lambda m: m.server_timestamp)
+            if not validate_message_chain_with_anchor(
+                self.space_id, server_messages, latest_cached.message_hash
+            ):
+                server_messages.sort(key=lambda m: m.server_timestamp)
+                if server_messages[0].prev_hash is not None:
+                    raise ChainError(
+                        f"Chain validation failed: new messages don't link to cached chain"
+                    )
+
+        # Cache new messages (they've been validated)
+        self._local_store.put_messages(self.space_id, server_messages)
+
+        # Merge cached and server messages, deduplicate by hash
+        seen_hashes = set()
+        merged = []
+        for msg in cached + server_messages:
+            if msg.message_hash not in seen_hashes:
+                seen_hashes.add(msg.message_hash)
+                merged.append(msg)
+        merged.sort(key=lambda m: m.server_timestamp)
+        return merged[:limit]
+
+    def _validate_and_verify_messages(
+        self, topic_id: str, messages_list: list[Message]
+    ) -> None:
+        """Validate message hashes and chain for messages without cache."""
+        for msg in messages_list:
+            if not verify_message_hash(self.space_id, msg):
+                raise ChainError(
+                    f"Message hash verification failed for {msg.message_hash}"
+                )
+
+        messages_list.sort(key=lambda m: m.server_timestamp)
+        if messages_list:
+            anchor = messages_list[0].prev_hash
+            if not validate_message_chain_with_anchor(self.space_id, messages_list, anchor):
+                raise ChainError("Chain validation failed: messages don't form valid chain")
+
+    async def _fetch_gap_messages(
+        self,
+        topic_id: str,
+        cached_head_hash: str,
+        target_prev_hash: str,
+        max_iterations: int = 10,
+    ) -> list[Message]:
+        """
+        Fetch messages to fill gap between cached head and new messages.
+
+        Walks backwards from target_prev_hash until we reach cached_head_hash
+        or the start of the topic.
+        """
+        gap_messages = []
+        current_hash = target_prev_hash
+
+        for _ in range(max_iterations):
+            if current_hash is None or current_hash == cached_head_hash:
+                break
+
+            try:
+                msg = await self._fetch_message_by_hash(topic_id, current_hash)
+                if msg is None:
+                    break
+                gap_messages.insert(0, msg)
+                current_hash = msg.prev_hash
+            except Exception:
+                break
+
+        return gap_messages
+
+    async def _fetch_message_by_hash(self, topic_id: str, message_hash: str) -> Message | None:
+        """Fetch a single message by hash from server."""
+        try:
+            client = await self.get_client()
+            response = await client.get(
+                f"/spaces/{self.space_id}/topics/{topic_id}/messages/{message_hash}"
+            )
+            response.raise_for_status()
+            data = response.json()
+            return Message(**data)
+        except httpx.HTTPStatusError:
+            return None
+        except Exception:
+            return None
+
+    async def _fetch_messages_from_server(
+        self,
+        topic_id: str,
+        from_timestamp: int | None = None,
+        to_timestamp: int | None = None,
+        limit: int = 100,
+    ) -> list[Message]:
+        """Fetch messages directly from server without caching."""
         client = await self.get_client()
         return await messages.get_messages_async(
             client=client,

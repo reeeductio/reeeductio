@@ -113,10 +113,10 @@ class TestSpaceKeyDerivation:
         root = os.urandom(32)
 
         # Manual derivation
-        message_key = derive_key(root, f"message key|{space_id}")
-        blob_key = derive_key(root, f"blob key|{space_id}")
-        state_key = derive_key(root, f"state key|{space_id}")
-        data_key = derive_key(root, f"data key|{space_id}")
+        message_key = derive_key(root, f"message key | {space_id}")
+        blob_key = derive_key(root, f"blob key | {space_id}")
+        state_key = derive_key(message_key, "topic key | state")
+        data_key = derive_key(root, f"data key | {space_id}")
 
         # Space derivation
         space = Space(
@@ -209,7 +209,7 @@ class TestDomainSeparation:
         key_without_space = derive_key(root, "message key")
 
         # Derive with space_id (secure)
-        key_with_space = derive_key(root, f"message key|{space_id}")
+        key_with_space = derive_key(root, f"message key | {space_id}")
 
         # Derive via Space client (should match secure version)
         space = Space(

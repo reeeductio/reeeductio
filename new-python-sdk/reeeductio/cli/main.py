@@ -5,8 +5,17 @@ import click
 from .commands import auth, blob, key, space, tool, user
 
 
+def _get_version() -> str:
+    """Get package version, with fallback for development installs."""
+    try:
+        from importlib.metadata import version
+        return version("reeeductio-client")
+    except Exception:
+        return "dev"
+
+
 @click.group()
-@click.version_option(package_name="reeeductio-client")
+@click.version_option(version=_get_version())
 @click.option(
     "--base-url",
     "-u",
