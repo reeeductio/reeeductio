@@ -1,0 +1,1 @@
+1. ~~Add local cache / storage for messagess~~
