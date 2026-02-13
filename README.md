@@ -16,17 +16,17 @@ Several components are provided, including:
 
 **Messaging**
 
-Each space supports multiple independent message topics, each maintaining a blockchain-style hash chain for tamper detection. Messages are end-to-end encrypted and signed client-side before being sent to the server, so the server only ever sees opaque ciphertext.
+Each space can contain multiple independent topics. The messages in each topic form a blockchain-style hash chain for tamper detection. Messages are end-to-end encrypted and signed client-side before being sent to the server, so the server only ever sees opaque ciphertext.
 
 **Cloud Storage**
 
-rEEEductio provides content-addressable blob storage where files are encrypted client-side, identified by the SHA-256 hash of their ciphertext, and uploaded to a pluggable backend (S3/MinIO or local filesystem). Spaces also include a hierarchical key-value state store, backed by the message hash chain for full audit history, and a lightweight signed key-value data store for application data that doesn't need event-sourced history. All storage paths are governed by the same capability-based authorization system used for messaging, providing unified access control across the entire data layer.
+rEEEductio provides content-addressable blob storage where files are encrypted client-side, identified by the SHA-256 hash of their ciphertext. Spaces also include a hierarchical key-value state store, backed by the message hash chain for full audit history, and a lightweight signed key-value data store for application data that doesn't need event-sourced history. All storage paths are governed by the same capability-based authorization system used for messaging, providing unified access control across the entire data layer.
 
 ## Security
 
 **Encryption**
 
-All message content, blob data, and application state are encrypted client-side using AES-GCM before leaving the device. The server operates in a true zero-knowledge mode — it stores and relays only opaque ciphertext and never has access to plaintext or key material. Each space derives its encryption keys from a single shared symmetric root using HKDF-SHA256 with domain-separated info strings, providing cryptographic isolation between messages, blobs, state, and key-value data without requiring users to manage multiple keys.
+All message content, blob data, and application state are encrypted client-side using AES-GCM before leaving the device. The server operates in a true zero-knowledge mode — it stores and relays only opaque ciphertext and never has access to plaintext or key material. Each space derives its encryption keys from a single shared symmetric root key using HKDF-SHA256 with domain-separated info strings, providing cryptographic isolation between messages, blobs, state, and key-value data without requiring users to manage multiple keys.
 
 **Integrity**
 
