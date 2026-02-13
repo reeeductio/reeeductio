@@ -1,3 +1,5 @@
+# rEEEductio
+
 rEEEductio is an absurdly simple end-to-end encrypted (EEE) data layer for building apps with secure messaging and encrypted cloud storage.
 
 It handles all the complexity of encryption, hashing, signing, verification, key derivation, authentication, and authorization.  Developers are then free to focus on building the core features of their apps.
@@ -28,7 +30,7 @@ All message content, blob data, and application state are encrypted client-side 
 
 **Integrity**
 
-Every message is individually signed with the sender's Ed25519 key and includes a SHA-256 hash computed over its space, topic, type, payload, sender, and the hash of the preceding message. This creates a per-topic hash chain that makes tampering, reordering, or deletion of messages detectable by any participant. The server enforces chain consistency via compare-and-swap on append, preventing forks. State entries are similarly signed and timestamped, and blobs are content-addressed by the SHA-256 hash of their ciphertext, ensuring integrity at rest.
+Every message is individually signed with the sender's Ed25519 key and includes a SHA-256 hash computed over its space, topic, type, payload, sender, and the hash of the preceding message. This creates a per-topic hash chain that makes tampering, reordering, or deletion of messages detectable by any participant. State entries are similarly signed and timestamped, and blobs are content-addressed by the SHA-256 hash of their ciphertext, ensuring integrity at rest.
 
 **Authentication**
 
