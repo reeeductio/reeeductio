@@ -1,6 +1,6 @@
 # rEEEductio: Absurdly Simple Encrypted Spaces
 
-rEEEductio is an absurdly simple end-to-end encrypted (EEE) data layer for building apps with secure messaging and encrypted cloud storage.
+rEEEductio is an end-to-end encrypted (EEE) data layer that makes it absurdly simple to build an app with secure messaging and encrypted cloud storage.
 
 It handles all the complexity of encryption, hashing, signing, verification, key derivation, authentication, and authorization.  Developers are then free to focus on building the core features of their apps.
 
