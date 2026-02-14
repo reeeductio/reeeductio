@@ -4,54 +4,27 @@
 
 ```
 reeeductio/
-├── README.md                  # Complete documentation
-├── openapi.yaml              # OpenAPI 3.0 specification (shared)
-├── pyproject.toml            # Python project metadata and dependencies
-├── start.sh                  # Quick start script
 │
-├── backend/                  # Backend implementation
-│   ├── main.py               # FastAPI application entry point
-│   ├── space.py            # Space management and API logic
-│   ├── crypto.py             # Cryptographic utilities (Ed25519, SHA256)
-│   ├── authorization.py      # Capability-based authorization with RBAC
-│   ├── identifiers.py        # Typed identifier utilities
-│   ├── path_validation.py    # Path wildcard matching ({any}, {self}, {other}, {...})
-│   ├── capability.py         # Capability data structures
-│   │
-│   ├── state_store.py        # StateStore interface
-│   ├── sqlite_state_store.py # SQLite StateStore implementation
-│   ├── firestore_state_store.py # Firestore StateStore implementation
-│   │
-│   ├── message_store.py      # MessageStore interface
-│   ├── sqlite_message_store.py # SQLite MessageStore implementation
-│   ├── firestore_message_store.py # Firestore MessageStore implementation
-│   │
-│   ├── blob_store.py         # BlobStore interface
-│   ├── filesystem_blob_store.py # Filesystem BlobStore implementation
-│   ├── sqlite_blob_store.py  # SQLite BlobStore implementation
-│   │
-│   └── tests/                # Test suite
-│       ├── conftest.py       # Shared fixtures and test utilities
-│       ├── test_authorization.py    # Authorization tests
-│       ├── test_rbac.py      # Role-based access control tests
-│       ├── test_tools.py     # Tool authorization and use limit tests
-│       ├── test_crypto.py    # Cryptographic function tests
-│       ├── test_identifiers.py # Typed identifier tests
-│       ├── test_state_storage.py # Generic state storage tests
-│       ├── test_message_storage.py # Message storage tests
-│       ├── test_blob_storage.py # Blob storage tests
-│       ├── test_blob_auth.py # Blob authorization tests
-│       ├── test_path_validation.py # Path wildcard validation tests
-│       ├── test_path_validation_integration.py # Path validation integration tests
-│       ├── test_integration.py # End-to-end integration tests
-│       ├── test_firestore_stores.py # Firestore backend tests
-│       └── test_websocket.py # WebSocket tests
+├── docs/                      # Design documentation
 │
-├── client/                   # Client implementation
-│   └── example_client.py     # Client usage examples
+├── backend/                   # Backend server implementation
+│   └── tests/                 # Test suite
+│       └── e2e/                      # End-to-end tests
 │
-└── Generated at runtime:
-    └── messaging.db          # SQLite database file
+├── python-sdk/                # Python client SDK
+│   ├── reeeductio/            # SDK package
+│   │   └── cli/               # CLI tool (reeeductio-admin)
+│   ├── examples/              # Usage examples
+│   └── tests/                 # SDK tests
+│
+├── typescript-sdk/            # TypeScript/JavaScript client SDK
+│   ├── src/                   # Source code
+│   │   └── __tests__/         # Unit tests
+│   │       └── e2e/                  # End-to-end tests
+│   │
+│   └── dist/                  # Built output (generated)
+│
+└── ideas/                     # Design ideas and proposals
 ```
 
 ## Quick Start
@@ -68,10 +41,15 @@ uv pip install -e .
 
 ### 2. Run Tests
 ```bash
+# Backend tests
 uv run pytest
-# or run specific tests
 uv run pytest backend/tests/test_rbac.py
-uv run pytest backend/tests/test_tools.py
+
+# Python SDK tests
+cd python-sdk && uv run pytest
+
+# TypeScript SDK tests
+cd typescript-sdk && npm test
 ```
 
 ### 3. Start Server
@@ -88,11 +66,6 @@ Or use the convenience script:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-### 5. Run Examples
-```bash
-.venv/bin/python client/example_client.py
-```
-
 ## File Descriptions
 
 ### Core Backend Files
@@ -108,6 +81,16 @@ Or use the convenience script:
 - State and message operations
 - Authentication (challenge/verify/JWT)
 - Authorization checks via AuthorizationEngine
+
+**backend/space_manager.py**
+- Multi-space lifecycle management
+- Space creation and lookup
+
+**backend/admin_space.py**
+- Admin space operations and bootstrapping
+
+**backend/config.py**
+- Server configuration loading (YAML-based)
 
 **backend/crypto.py**
 - Ed25519 signature verification
@@ -135,25 +118,77 @@ Or use the convenience script:
 - 264-bit format (44-char URL-safe base64)
 - Type validation
 
+**backend/exceptions.py**
+- Custom exception types for the backend
+
+**backend/logging_config.py**
+- Structured logging configuration
+
+**backend/lru_cache.py**
+- LRU cache for performance optimization
+
 ### Storage Layer
 
-**State Storage**
-- `state_store.py` - StateStore interface
-- `sqlite_state_store.py` - SQLite implementation with tool usage tracking
-- `firestore_state_store.py` - Firestore implementation
-- All state entries are signed (signature, signed_by, signed_at)
+**Data Storage**
+- `data_store.py` - DataStore interface
+- `sql_data_store.py` - SQL DataStore base implementation
+- `sqlite_data_store.py` - SQLite DataStore implementation
+- `firestore_data_store.py` - Firestore DataStore implementation
+- `event_sourced_state_store.py` - Event-sourced state store
 
 **Message Storage**
 - `message_store.py` - MessageStore interface
-- `sqlite_message_store.py` - SQLite implementation
-- `firestore_message_store.py` - Firestore implementation
+- `sql_message_store.py` - SQL MessageStore base implementation
+- `sqlite_message_store.py` - SQLite MessageStore implementation
+- `firestore_message_store.py` - Firestore MessageStore implementation
 - Hash chain validation
 
 **Blob Storage**
 - `blob_store.py` - BlobStore interface
 - `filesystem_blob_store.py` - Filesystem implementation
 - `sqlite_blob_store.py` - SQLite implementation
+- `s3_blob_store.py` - S3 implementation
 - Content-addressed storage
+
+### Python SDK (`python-sdk/`)
+
+The Python SDK provides a high-level client library for interacting with rEEEductio servers.
+
+**Core Modules**
+- `client.py` - HTTP client for server API calls
+- `auth.py` - Authentication workflows (challenge/verify/JWT)
+- `crypto.py` - Client-side Ed25519 signing, key generation
+- `state.py` - State read/write operations
+- `messages.py` - Message posting and retrieval
+- `blobs.py` - Blob upload and download
+- `kvdata.py` - Key-value data operations
+- `models.py` - Pydantic data models
+- `exceptions.py` - SDK-specific exception types
+- `opaque.py` - OPAQUE password-authenticated key exchange
+- `local_store.py` - Local credential and key storage
+
+**CLI Tool (`reeeductio-admin`)**
+- `cli/main.py` - CLI entry point
+- `cli/commands/` - Subcommands for auth, blob, key, space, tool, and user management
+
+### TypeScript SDK (`typescript-sdk/`)
+
+The TypeScript SDK provides a client library for Node.js and browser environments.
+
+**Core Modules**
+- `client.ts` - HTTP client for server API calls
+- `auth.ts` - Authentication workflows (challenge/verify/JWT)
+- `crypto.ts` - Client-side Ed25519 signing, key generation
+- `state.ts` - State read/write operations
+- `messages.ts` - Message posting and retrieval
+- `blobs.ts` - Blob upload and download
+- `kvdata.ts` - Key-value data operations
+- `types.ts` - TypeScript type definitions
+- `exceptions.ts` - SDK-specific exception types
+- `opaque.ts` - OPAQUE password-authenticated key exchange
+- `local_store.ts` - Local credential/key storage (Node.js filesystem)
+- `local_store_idb.ts` - Local storage using IndexedDB (browser)
+- `debug.ts` - Debug logging utilities
 
 ### Configuration Files
 
@@ -173,91 +208,10 @@ Or use the convenience script:
 
 ### Documentation
 
-**README.md**
-- Architecture overview
-- Security model
-- API documentation
-- Setup instructions
-- Usage examples
-- Design decisions
-
-### Client Files
-
-**client/example_client.py**
-- Space bootstrap example
-- User join workflow
-- Message posting and retrieval
-- Cryptographic operations
-- Capability management
-
-### Test Files
-
-**backend/tests/conftest.py**
-- Shared pytest fixtures (temp_db_path, state_store, crypto, authz, etc.)
-- Keypair fixtures (admin_keypair, user_keypair, tool_keypair)
-- Helper functions (sign_state_entry, sign_and_store_state, set_space_state)
-- Firestore emulator setup
-
-**backend/tests/test_authorization.py**
-- Basic capability authorization tests
-- Permission checking tests
-- Capability subset validation
-
-**backend/tests/test_rbac.py**
-- Role-based access control tests
-- Role grant validation
-- Multiple role inheritance
-- Expired role handling
-- Privilege escalation prevention
-
-**backend/tests/test_tools.py**
-- Tool typed identifier tests
-- Tool capability authorization
-- Tool use limit enforcement
-- Tool authentication
-- Privilege escalation prevention for tools
-
-**backend/tests/test_crypto.py**
-- Ed25519 signature verification
-- SHA256 hash computation
-- Base64 encoding/decoding
-
-**backend/tests/test_identifiers.py**
-- Typed identifier encoding/decoding
-- Type validation
-- URL-safety verification
-
-**backend/tests/test_state_storage.py**
-- Generic state storage tests (work with any StateStore)
-- SQLite-specific tests
-- Signed state entry validation
-
-**backend/tests/test_message_storage.py**
-- Message storage and retrieval
-- Hash chain validation
-
-**backend/tests/test_blob_storage.py**
-- Blob storage backends (filesystem and SQLite)
-- Content-addressed storage
-
-**backend/tests/test_blob_auth.py**
-- Blob authorization tests
-
-**backend/tests/test_path_validation.py**
-- Path wildcard pattern matching
-- {any}, {self}, {other}, {...} validation
-
-**backend/tests/test_path_validation_integration.py**
-- Integration tests for path validation with authorization
-
-**backend/tests/test_integration.py**
-- End-to-end workflow tests
-
-**backend/tests/test_firestore_stores.py**
-- Firestore StateStore and MessageStore tests
-
-**backend/tests/test_websocket.py**
-- WebSocket functionality tests
+**README.md** - Project overview, architecture, and setup
+**API.md** - API endpoint documentation
+**SECURITY.md** - Security model and threat analysis
+**docs/** - Detailed design documents (authorization, chain validation, event-sourced state, typed identifiers, unified namespace)
 
 ## Development Workflow
 
@@ -270,79 +224,16 @@ Edit `openapi.yaml` first to define the contract, then update `backend/main.py` 
 - Add authorization logic in `backend/authorization.py`
 - Add path validation patterns in `backend/path_validation.py`
 - Wire everything together in `backend/space.py` and `backend/main.py`
+- Update SDKs to support new features
 
 ### 3. Test
-- Add tests to appropriate test file in `backend/tests/`
-- Run all tests: `uv run pytest`
-- Run specific test file: `uv run pytest backend/tests/test_rbac.py`
+- Backend tests: `uv run pytest`
+- Python SDK tests: `cd python-sdk && uv run pytest`
+- TypeScript SDK tests: `cd typescript-sdk && npm test`
+- E2E tests: `cd typescript-sdk && npx vitest --config vitest.e2e.config.ts`
 - Run with coverage: `uv run pytest --cov=backend --cov-report=html`
 
 ### 4. Document
 - Update README.md with new features
-- Add examples to `client/example_client.py`
-
-## Production Considerations
-
-This is a reference implementation. Before production use:
-
-1. **Security**
-   - Replace in-memory challenge storage with Redis
-   - Add rate limiting
-   - Implement proper message encryption (AES-GCM)
-   - Add TLS/HTTPS
-   - Implement proper key derivation
-
-2. **Scalability**
-   - Move to PostgreSQL from SQLite
-   - Add database indexes for your query patterns
-   - Implement message pagination
-   - Add caching (Redis)
-
-3. **Reliability**
-   - Add comprehensive error handling
-   - Implement retry logic
-   - Add health checks
-   - Monitor database connections
-   - Add logging and metrics
-
-4. **Features**
-   - Implement WebSocket for real-time updates
-   - Add message editing/deletion
-   - Implement file upload progress
-   - Add batch operations
-
-## Architecture Decisions
-
-### Why FastAPI?
-- Fast, modern Python web framework
-- Automatic OpenAPI documentation
-- Built-in request validation
-- Async support for WebSockets
-
-### Why SQLite?
-- Simple, embedded database
-- No separate server needed
-- Perfect for development and demos
-- Easy to migrate to PostgreSQL later
-
-### Why Ed25519?
-- Fast signature verification
-- Small key sizes (32 bytes)
-- Modern, secure algorithm
-- Well-supported in cryptography libraries
-
-### Why Capability-Based Authorization?
-- Fine-grained permissions
-- Delegation support
-- Audit trail (signed capabilities)
-- Prevents privilege escalation
-- Decentralized control
-
-## Next Steps
-
-1. Implement WebSocket `/stream` endpoint
-2. Add proper message encryption (AES-GCM)
-3. Build a simple web client
-4. Add multi-device support
-5. Implement space key rotation
-6. Add forward secrecy (message ratcheting)
+- Update API.md for endpoint changes
+- Add examples to SDK `examples/` directories
