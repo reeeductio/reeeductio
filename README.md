@@ -66,6 +66,10 @@ Each space has:
 - Efficient key-value storage with cryptographic signatures
 - Content-addressable object ("blob") storage for files and other large data.  Blobs are identified by the SHA-256 hash of their content.
 
+Every space must be hosted on a server somewhere, but nothing in the space ties it to that particular server or to the server's domain name.
+
+In practice, a single app might connect to many different spaces simultaneously, on several different servers.
+
 ### Topics
 Topics are message streams within a space.
 Each topic maintains:
