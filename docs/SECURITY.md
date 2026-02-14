@@ -1,5 +1,12 @@
 # Security
 
+rEEEductio has been designed from the ground up to be secure against a variety of threats,
+including a compromised server (or database) that tries to read, modify, or forge the
+space's contents.
+
+At the same time, this is a hobby project that has not been independently reviewed for security.
+Use it at your own peril.
+
 ## Integrity
 
 The space public key is the root of trust for everything in the space.
