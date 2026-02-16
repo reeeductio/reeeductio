@@ -25,19 +25,6 @@ async def space(fresh_keypair, symmetric_root, base_url):
         yield s
 
 
-@pytest_asyncio.fixture
-async def root_space(admin_keypair, admin_symmetric_root, base_url):
-    """Create an AsyncSpace client authenticated as the root user of the space."""
-    space_id = admin_keypair.to_space_id()
-    async with AsyncSpace(
-        space_id=space_id,
-        keypair=admin_keypair,
-        symmetric_root=admin_symmetric_root,
-        base_url=base_url,
-    ) as s:
-        yield s
-
-
 class TestAsyncAuthentication:
     async def test_authenticate_returns_token(self, space):
         token = await space.authenticate()
@@ -239,59 +226,59 @@ class TestAsyncCreateTool:
 
 
 class TestAsyncCreateInvitation:
-    async def test_create_invitation_returns_keypair(self, root_space):
+    async def test_create_invitation_returns_keypair(self, space):
         """create_invitation should return an Ed25519KeyPair."""
-        keypair = await root_space.create_invitation()
+        keypair = await space.create_invitation()
         assert isinstance(keypair, Ed25519KeyPair)
         assert len(keypair.private_key) == 32
         assert len(keypair.public_key) == 32
 
-    async def test_create_invitation_creates_tool_entry(self, root_space):
+    async def test_create_invitation_creates_tool_entry(self, space):
         """create_invitation should create a tool entry for the keypair."""
-        keypair = await root_space.create_invitation(description="Async test invitation")
+        keypair = await space.create_invitation(description="Async test invitation")
         tool_id = keypair.to_tool_id()
 
-        tool_data = await root_space.get_plaintext_state(f"auth/tools/{tool_id}")
+        tool_data = await space.get_plaintext_state(f"auth/tools/{tool_id}")
         tool = json.loads(tool_data)
         assert tool["tool_id"] == tool_id
         assert tool["description"] == "Async test invitation"
 
-    async def test_create_invitation_grants_create_user_capability(self, root_space):
+    async def test_create_invitation_grants_create_user_capability(self, space):
         """create_invitation should grant the tool permission to create users."""
-        keypair = await root_space.create_invitation()
+        keypair = await space.create_invitation()
         tool_id = keypair.to_tool_id()
 
-        cap_data = await root_space.get_plaintext_state(
+        cap_data = await space.get_plaintext_state(
             f"auth/tools/{tool_id}/rights/can_create_user"
         )
         cap = json.loads(cap_data)
         assert cap["op"] == "create"
         assert cap["path"] == "state/auth/users/{any}"
 
-    async def test_create_invitation_grants_assign_user_role_capability(self, root_space):
+    async def test_create_invitation_grants_assign_user_role_capability(self, space):
         """create_invitation should grant the tool permission to assign the user role."""
-        keypair = await root_space.create_invitation()
+        keypair = await space.create_invitation()
         tool_id = keypair.to_tool_id()
 
-        cap_data = await root_space.get_plaintext_state(
+        cap_data = await space.get_plaintext_state(
             f"auth/tools/{tool_id}/rights/can_grant_user_role"
         )
         cap = json.loads(cap_data)
         assert cap["op"] == "create"
         assert cap["path"] == "state/auth/users/{any}/roles/user"
 
-    async def test_create_multiple_invitations_are_independent(self, root_space):
+    async def test_create_multiple_invitations_are_independent(self, space):
         """Each create_invitation call should produce a unique tool."""
-        keypair1 = await root_space.create_invitation()
-        keypair2 = await root_space.create_invitation()
+        keypair1 = await space.create_invitation()
+        keypair2 = await space.create_invitation()
 
         assert keypair1.to_tool_id() != keypair2.to_tool_id()
 
         tool1 = json.loads(
-            await root_space.get_plaintext_state(f"auth/tools/{keypair1.to_tool_id()}")
+            await space.get_plaintext_state(f"auth/tools/{keypair1.to_tool_id()}")
         )
         tool2 = json.loads(
-            await root_space.get_plaintext_state(f"auth/tools/{keypair2.to_tool_id()}")
+            await space.get_plaintext_state(f"auth/tools/{keypair2.to_tool_id()}")
         )
         assert tool1["tool_id"] == keypair1.to_tool_id()
         assert tool2["tool_id"] == keypair2.to_tool_id()
