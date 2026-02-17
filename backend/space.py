@@ -679,7 +679,8 @@ class Space:
         user = self.authenticate_request(token)
 
         # Check read permission
-        if not self.check_permission(user["id"], "read", f"topics/{topic_id}/messages/"):
+        # NOTE - the "state" topic is world-readable
+        if topic_id != "state" and not self.check_permission(user["id"], "read", f"topics/{topic_id}/messages/"):
             raise ValueError("No read permission for topic")
 
         # Get messages
