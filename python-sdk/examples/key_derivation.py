@@ -34,7 +34,8 @@ print(f"  data_key:    {data_key.hex()[:32]}...\n")
 
 space = Space(
     space_id=space_id,
-    keypair=keypair,
+    member_id=keypair.to_user_id(),
+    private_key=keypair.private_key,
     symmetric_root=symmetric_root,
     base_url="http://localhost:8000",
     auto_authenticate=False,
@@ -57,7 +58,8 @@ print("✓ Manual derivation matches Space client derivation\n")
 # Show that keys are deterministic
 space2 = Space(
     space_id=space_id,
-    keypair=keypair,
+    member_id=keypair.to_user_id(),
+    private_key=keypair.private_key,
     symmetric_root=symmetric_root,
     base_url="http://localhost:8000",
     auto_authenticate=False,
@@ -74,7 +76,8 @@ print("✓ Key derivation is deterministic (same root → same keys)\n")
 different_root = os.urandom(32)
 space3 = Space(
     space_id=space_id,
-    keypair=keypair,
+    member_id=keypair.to_user_id(),
+    private_key=keypair.private_key,
     symmetric_root=different_root,
     base_url="http://localhost:8000",
     auto_authenticate=False,
@@ -91,7 +94,8 @@ print("✓ Different roots produce different keys\n")
 different_space_id = keypair.to_user_id()  # Different ID type
 space4 = Space(
     space_id=different_space_id,
-    keypair=keypair,
+    member_id=keypair.to_user_id(),
+    private_key=keypair.private_key,
     symmetric_root=symmetric_root,  # Same root!
     base_url="http://localhost:8000",
     auto_authenticate=False,

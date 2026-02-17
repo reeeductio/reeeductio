@@ -172,7 +172,8 @@ def opaque_login(
         # Use recovered credentials to create a Space client
         space = Space(
             space_id=space_id,
-            keypair=credentials.keypair,
+            member_id=credentials.keypair.to_user_id(),
+            private_key=credentials.keypair.private_key,
             symmetric_root=credentials.symmetric_root,
             base_url=base_url,
         )

@@ -63,7 +63,8 @@ def add_tool(ctx, tool_id: str, space_key: str, symmetric_root: str):
 
     with Space(
         space_id=space_id,
-        keypair=keypair,
+        member_id=keypair.to_user_id(),
+        private_key=keypair.private_key,
         symmetric_root=sym_root,
         base_url=base_url,
     ) as space:
@@ -106,7 +107,8 @@ def remove_tool(ctx, tool_id: str, space_key: str, symmetric_root: str):
 
     with Space(
         space_id=space_id,
-        keypair=keypair,
+        member_id=keypair.to_user_id(),
+        private_key=keypair.private_key,
         symmetric_root=sym_root,
         base_url=base_url,
     ) as space:
@@ -148,7 +150,8 @@ def list_tools(ctx, space_key: str, symmetric_root: str, output_format: str):
 
     with Space(
         space_id=space_id,
-        keypair=keypair,
+        member_id=keypair.to_user_id(),
+        private_key=keypair.private_key,
         symmetric_root=sym_root,
         base_url=base_url,
     ) as space:
@@ -231,7 +234,8 @@ def grant_tool(ctx, tool_id: str, space_key: str, symmetric_root: str, cap_id: s
 
     with Space(
         space_id=space_id,
-        keypair=keypair,
+        member_id=keypair.to_user_id(),
+        private_key=keypair.private_key,
         symmetric_root=sym_root,
         base_url=base_url,
     ) as space:

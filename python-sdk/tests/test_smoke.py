@@ -107,7 +107,8 @@ def test_imports():
     try:
         space = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=symmetric_root,
             base_url="http://localhost:8000",
             auto_authenticate=False,  # Don't auto-authenticate in test
@@ -138,7 +139,8 @@ def test_imports():
         # Verify keys are deterministic (same root produces same keys)
         space2 = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=symmetric_root,
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -153,7 +155,8 @@ def test_imports():
         different_space_id = keypair.to_tool_id()  # Use a different ID
         space3 = Space(
             space_id=different_space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=symmetric_root,  # Same root!
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -171,7 +174,8 @@ def test_imports():
     try:
         Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=b"too short",  # Only 9 bytes
             base_url="http://localhost:8000",
         )

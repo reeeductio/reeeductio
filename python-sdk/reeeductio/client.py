@@ -36,7 +36,8 @@ class Space:
 
     Attributes:
         space_id: Typed space identifier
-        keypair: Ed25519 key pair for authentication and signing
+        member_id: Typed member identifier (U_... for users, T_... for tools)
+        private_key: Raw 32-byte Ed25519 private key
         symmetric_root: 256-bit root key for HKDF derivation
         message_key: Derived key for message encryption (32 bytes)
         blob_key: Derived key for blob encryption (32 bytes)
@@ -49,7 +50,8 @@ class Space:
     def __init__(
         self,
         space_id: str,
-        keypair: Ed25519KeyPair,
+        member_id: str,
+        private_key: bytes,
         symmetric_root: bytes,
         base_url: str = "http://localhost:8000",
         auto_authenticate: bool = True,
@@ -60,7 +62,8 @@ class Space:
 
         Args:
             space_id: Typed space identifier (44-char base64)
-            keypair: Ed25519 key pair for authentication and signing
+            member_id: Typed member identifier (U_... for users, T_... for tools)
+            private_key: Raw 32-byte Ed25519 private key for authentication and signing
             symmetric_root: 256-bit (32-byte) root key for HKDF key derivation
             base_url: Base URL of the reeeductio server
             auto_authenticate: Whether to authenticate automatically on first request
@@ -74,7 +77,8 @@ class Space:
             raise ValueError(f"symmetric_root must be exactly 32 bytes, got {len(symmetric_root)}")
 
         self.space_id = space_id
-        self.keypair = keypair
+        self.member_id = member_id
+        self.private_key = private_key
         self.symmetric_root = symmetric_root
         self.base_url = base_url
         self._auto_authenticate = auto_authenticate
@@ -92,8 +96,8 @@ class Space:
         # Create authentication session
         self.auth = AuthSession(
             space_id=space_id,
-            public_key_typed=keypair.to_user_id(),
-            private_key=keypair.private_key,
+            public_key_typed=member_id,
+            private_key=private_key,
             base_url=base_url,
         )
 
@@ -284,8 +288,8 @@ class Space:
             path=path,
             data=data,
             prev_hash=prev_hash,
-            sender_public_key_typed=self.keypair.to_user_id(),
-            sender_private_key=self.keypair.private_key,
+            sender_public_key_typed=self.member_id,
+            sender_private_key=self.private_key,
         )
 
     def get_state_history(
@@ -614,8 +618,8 @@ class Space:
             msg_type=msg_type,
             data=data,
             prev_hash=prev_hash,
-            sender_public_key_typed=self.keypair.to_user_id(),
-            sender_private_key=self.keypair.private_key,
+            sender_public_key_typed=self.member_id,
+            sender_private_key=self.private_key,
         )
 
     # ============================================================
@@ -797,8 +801,8 @@ class Space:
             space_id=self.space_id,
             path=path,
             data=data,
-            signed_by=self.keypair.to_user_id(),
-            private_key=self.keypair.private_key,
+            signed_by=self.member_id,
+            private_key=self.private_key,
         )
 
     # ============================================================
@@ -833,9 +837,9 @@ class Space:
             json.dumps(role_data),
         )
 
-    def create_user(self, user_id: str, description: str | None = None) -> MessageCreated:
+    def add_user(self, user_id: str, description: str | None = None) -> MessageCreated:
         """
-        Create a user entry in the space.
+        Add a user entry in the space.
 
         Users are stored at auth/users/{user_id} and can have capabilities
         granted to them via grant_capability_to_user().
@@ -1055,9 +1059,9 @@ class Space:
             username: OPAQUE username (must be unique within the space)
             password: Password for future logins
             user_id: Typed identifier string (USER or TOOL) for the public key.
-                If None, uses self.keypair.to_user_id().
+                If None, uses self.member_id.
             private_key: 32-byte Ed25519 private key matching user_id.
-                If None, uses self.keypair.private_key.
+                If None, uses self.private_key.
 
         Returns:
             The username that was registered
@@ -1070,7 +1074,7 @@ class Space:
 
         Example:
             # Register after being added to a space
-            space = Space(space_id, keypair, symmetric_root, base_url)
+            space = Space(space_id, member_id, private_key, symmetric_root, base_url)
             space.opaque_register("alice", "my-secure-password")
 
             # Register with a tool key
@@ -1085,11 +1089,11 @@ class Space:
         # Import from our local opaque module which wraps opaque_snake
         from .opaque import opaque_register as _opaque_register
 
-        # Use provided values or derive from self.keypair
+        # Use provided values or derive from self
         if user_id is None:
-            user_id = self.keypair.to_user_id()
+            user_id = self.member_id
         if private_key is None:
-            private_key = self.keypair.private_key
+            private_key = self.private_key
 
         return _opaque_register(
             client=self.client,
@@ -1126,7 +1130,7 @@ class Space:
 
         Example:
             # As space admin, enable OPAQUE
-            space = Space(space_id, admin_keypair, symmetric_root, base_url)
+            space = Space(space_id, member_id, private_key, symmetric_root, base_url)
             result = space.enable_opaque()
             if result["server_setup_created"]:
                 print("OPAQUE server setup created")
@@ -1198,7 +1202,8 @@ class AdminSpace(Space):
     Example:
         admin_space = AdminSpace(
             space_id=admin_space_id,
-            keypair=user_keypair,
+            member_id=user_keypair.to_user_id(),
+            private_key=user_keypair.private_key,
             symmetric_root=admin_symmetric_root,
             base_url=base_url,
         )
@@ -1237,8 +1242,8 @@ class AdminSpace(Space):
         # Derive space_id from the space keypair
         space_id = space_keypair.to_space_id()
 
-        # Get the user_id of the caller (who is creating the space)
-        created_by = self.keypair.to_user_id()
+        # Get the member_id of the caller (who is creating the space)
+        created_by = self.member_id
 
         # Get current timestamp in milliseconds
         created_at = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -1285,7 +1290,8 @@ class AdminClient:
         # Use regular Space client for admin operations
         space = Space(
             space_id=admin_space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=admin_symmetric_root,
             base_url=base_url,
         )
@@ -1724,7 +1730,8 @@ class AsyncSpace:
 
     Attributes:
         space_id: Typed space identifier
-        keypair: Ed25519 key pair for authentication and signing
+        member_id: Typed member identifier (U_... for users, T_... for tools)
+        private_key: Raw 32-byte Ed25519 private key
         symmetric_root: 256-bit root key for HKDF derivation
         message_key: Derived key for message encryption (32 bytes)
         blob_key: Derived key for blob encryption (32 bytes)
@@ -1737,7 +1744,8 @@ class AsyncSpace:
     def __init__(
         self,
         space_id: str,
-        keypair: Ed25519KeyPair,
+        member_id: str,
+        private_key: bytes,
         symmetric_root: bytes,
         base_url: str = "http://localhost:8000",
         auto_authenticate: bool = True,
@@ -1748,7 +1756,8 @@ class AsyncSpace:
 
         Args:
             space_id: Typed space identifier (44-char base64)
-            keypair: Ed25519 key pair for authentication and signing
+            member_id: Typed member identifier (U_... for users, T_... for tools)
+            private_key: Raw 32-byte Ed25519 private key for authentication and signing
             symmetric_root: 256-bit (32-byte) root key for HKDF key derivation
             base_url: Base URL of the reeeductio server
             auto_authenticate: Whether to authenticate automatically on first request
@@ -1762,7 +1771,8 @@ class AsyncSpace:
             raise ValueError(f"symmetric_root must be exactly 32 bytes, got {len(symmetric_root)}")
 
         self.space_id = space_id
-        self.keypair = keypair
+        self.member_id = member_id
+        self.private_key = private_key
         self.symmetric_root = symmetric_root
         self.base_url = base_url
         self._auto_authenticate = auto_authenticate
@@ -1777,8 +1787,8 @@ class AsyncSpace:
         # Create async authentication session
         self.auth = AsyncAuthSession(
             space_id=space_id,
-            public_key_typed=keypair.to_user_id(),
-            private_key=keypair.private_key,
+            public_key_typed=member_id,
+            private_key=private_key,
             base_url=base_url,
         )
 
@@ -2172,8 +2182,8 @@ class AsyncSpace:
             msg_type=msg_type,
             data=data,
             prev_hash=prev_hash,
-            sender_public_key_typed=self.keypair.to_user_id(),
-            sender_private_key=self.keypair.private_key,
+            sender_public_key_typed=self.member_id,
+            sender_private_key=self.private_key,
         )
 
     # ============================================================
@@ -2260,8 +2270,8 @@ class AsyncSpace:
             path=path,
             data=data,
             prev_hash=prev_hash,
-            sender_public_key_typed=self.keypair.to_user_id(),
-            sender_private_key=self.keypair.private_key,
+            sender_public_key_typed=self.member_id,
+            sender_private_key=self.private_key,
         )
 
     async def get_state_history(
@@ -2351,8 +2361,8 @@ class AsyncSpace:
             space_id=self.space_id,
             path=path,
             data=data,
-            signed_by=self.keypair.to_user_id(),
-            private_key=self.keypair.private_key,
+            signed_by=self.member_id,
+            private_key=self.private_key,
         )
 
     # ============================================================
@@ -2387,9 +2397,9 @@ class AsyncSpace:
             json.dumps(role_data),
         )
 
-    async def create_user(self, user_id: str, description: str | None = None) -> MessageCreated:
+    async def add_user(self, user_id: str, description: str | None = None) -> MessageCreated:
         """
-        Create a user entry in the space.
+        Add a user entry in the space.
 
         Users are stored at auth/users/{user_id} and can have capabilities
         granted to them via grant_capability_to_user().
@@ -2609,9 +2619,9 @@ class AsyncSpace:
             username: OPAQUE username (must be unique within the space)
             password: Password for future logins
             user_id: Typed identifier string (USER or TOOL) for the public key.
-                If None, uses self.keypair.to_user_id().
+                If None, uses self.member_id.
             private_key: 32-byte Ed25519 private key matching user_id.
-                If None, uses self.keypair.private_key.
+                If None, uses self.private_key.
 
         Returns:
             The username that was registered
@@ -2623,7 +2633,7 @@ class AsyncSpace:
             ValidationError: If username already exists or user_id doesn't match private_key
 
         Example:
-            async with AsyncSpace(space_id, keypair, symmetric_root, base_url) as space:
+            async with AsyncSpace(space_id, member_id, private_key, symmetric_root, base_url) as space:
                 await space.opaque_register("alice", "my-secure-password")
 
                 # Register with a tool key
@@ -2637,11 +2647,11 @@ class AsyncSpace:
         """
         from .opaque import opaque_register_async as _opaque_register_async
 
-        # Use provided values or derive from self.keypair
+        # Use provided values or derive from self
         if user_id is None:
-            user_id = self.keypair.to_user_id()
+            user_id = self.member_id
         if private_key is None:
-            private_key = self.keypair.private_key
+            private_key = self.private_key
 
         client = await self.get_client()
         return await _opaque_register_async(
@@ -2678,7 +2688,7 @@ class AsyncSpace:
             ValidationError: If operation fails (usually due to insufficient permissions)
 
         Example:
-            async with AsyncSpace(space_id, admin_keypair, symmetric_root, base_url) as space:
+            async with AsyncSpace(space_id, member_id, private_key, symmetric_root, base_url) as space:
                 result = await space.enable_opaque()
                 if result["server_setup_created"]:
                     print("OPAQUE server setup created")
@@ -2750,7 +2760,8 @@ class AsyncAdminSpace(AsyncSpace):
     Example:
         async with AsyncAdminSpace(
             space_id=admin_space_id,
-            keypair=user_keypair,
+            member_id=user_keypair.to_user_id(),
+            private_key=user_keypair.private_key,
             symmetric_root=admin_symmetric_root,
             base_url=base_url,
         ) as admin_space:
@@ -2788,8 +2799,8 @@ class AsyncAdminSpace(AsyncSpace):
         # Derive space_id from the space keypair
         space_id = space_keypair.to_space_id()
 
-        # Get the user_id of the caller (who is creating the space)
-        created_by = self.keypair.to_user_id()
+        # Get the member_id of the caller (who is creating the space)
+        created_by = self.member_id
 
         # Get current timestamp in milliseconds
         created_at = int(datetime.now(timezone.utc).timestamp() * 1000)

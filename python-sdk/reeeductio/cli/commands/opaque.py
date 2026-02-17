@@ -45,7 +45,8 @@ def enable(ctx, space_key: str, symmetric_root: str):
 
     with Space(
         space_id=space_id,
-        keypair=keypair,
+        member_id=keypair.to_user_id(),
+        private_key=keypair.private_key,
         symmetric_root=sym_root,
         base_url=base_url,
     ) as space:
@@ -113,7 +114,8 @@ def register(ctx, space_key: str, symmetric_root: str, username: str, password: 
 
     with Space(
         space_id=space_id,
-        keypair=keypair,
+        member_id=keypair.to_user_id(),
+        private_key=keypair.private_key,
         symmetric_root=sym_root,
         base_url=base_url,
     ) as space:

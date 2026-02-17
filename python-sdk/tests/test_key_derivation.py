@@ -70,7 +70,8 @@ class TestSpaceKeyDerivation:
 
         space = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -96,7 +97,8 @@ class TestSpaceKeyDerivation:
 
         space = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -121,7 +123,8 @@ class TestSpaceKeyDerivation:
         # Space derivation
         space = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -141,7 +144,8 @@ class TestSpaceKeyDerivation:
 
         space1 = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -149,7 +153,8 @@ class TestSpaceKeyDerivation:
 
         space2 = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -179,7 +184,8 @@ class TestDomainSeparation:
 
         space1 = Space(
             space_id=space_id_1,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -187,7 +193,8 @@ class TestDomainSeparation:
 
         space2 = Space(
             space_id=space_id_2,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,  # Same root!
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -214,7 +221,8 @@ class TestDomainSeparation:
         # Derive via Space client (should match secure version)
         space = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -236,7 +244,8 @@ class TestSecurityProperties:
 
         space = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -266,7 +275,8 @@ class TestSecurityProperties:
 
             space = Space(
                 space_id=space_id,
-                keypair=keypair,
+                member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
                 symmetric_root=root,  # Same root!
                 base_url="http://localhost:8000",
                 auto_authenticate=False,
@@ -288,7 +298,8 @@ class TestSecurityProperties:
         with pytest.raises(ValueError, match="must be exactly 32 bytes"):
             Space(
                 space_id=space_id,
-                keypair=keypair,
+                member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
                 symmetric_root=b"too short",
                 base_url="http://localhost:8000",
             )
@@ -297,7 +308,8 @@ class TestSecurityProperties:
         with pytest.raises(ValueError, match="must be exactly 32 bytes"):
             Space(
                 space_id=space_id,
-                keypair=keypair,
+                member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
                 symmetric_root=os.urandom(64),
                 base_url="http://localhost:8000",
             )
@@ -305,7 +317,8 @@ class TestSecurityProperties:
         # Just right (should not raise)
         Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=os.urandom(32),
             base_url="http://localhost:8000",
             auto_authenticate=False,
@@ -349,7 +362,8 @@ class TestEdgeCases:
 
         space = Space(
             space_id=space_id,
-            keypair=keypair,
+            member_id=keypair.to_user_id(),
+            private_key=keypair.private_key,
             symmetric_root=root,
             base_url="http://localhost:8000",
             auto_authenticate=False,

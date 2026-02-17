@@ -18,7 +18,8 @@ async def space(fresh_keypair, symmetric_root, base_url):
     space_id = fresh_keypair.to_space_id()
     async with AsyncSpace(
         space_id=space_id,
-        keypair=fresh_keypair,
+        member_id=fresh_keypair.to_user_id(),
+        private_key=fresh_keypair.private_key,
         symmetric_root=symmetric_root,
         base_url=base_url,
     ) as s:
@@ -35,7 +36,8 @@ class TestAsyncAuthentication:
         space_id = fresh_keypair.to_space_id()
         async with AsyncSpace(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
             auto_authenticate=True,

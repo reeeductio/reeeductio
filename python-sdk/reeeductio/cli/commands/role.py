@@ -47,7 +47,8 @@ def create_role(ctx, role_name: str, space_key: str, symmetric_root: str, descri
 
     with Space(
         space_id=space_id,
-        keypair=keypair,
+        member_id=keypair.to_user_id(),
+        private_key=keypair.private_key,
         symmetric_root=sym_root,
         base_url=base_url,
     ) as space:
@@ -103,7 +104,8 @@ def grant_to_role(ctx, role_name: str, space_key: str, symmetric_root: str, cap_
 
     with Space(
         space_id=space_id,
-        keypair=keypair,
+        member_id=keypair.to_user_id(),
+        private_key=keypair.private_key,
         symmetric_root=sym_root,
         base_url=base_url,
     ) as space:

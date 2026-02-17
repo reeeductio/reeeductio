@@ -55,7 +55,8 @@ def create(ctx, private_key: str, symmetric_root: str|None, output_format: str):
     # Create the admin space by authenticating to it (backend auto-creates on first auth)
     with AdminSpace(
         space_id=admin_space_id,
-        keypair=admin_keypair,
+        member_id=admin_keypair.to_user_id(),
+        private_key=admin_keypair.private_key,
         symmetric_root=sym_root,
         base_url=base_url,
     ) as a:

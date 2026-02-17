@@ -31,7 +31,8 @@ print(f"Generated symmetric root key: {symmetric_root.hex()[:32]}...")
 # Connect to the space
 with Space(
     space_id=SPACE_ID,
-    keypair=keypair,
+    member_id=keypair.to_user_id(),
+    private_key=keypair.private_key,
     symmetric_root=symmetric_root,
     base_url=BASE_URL,
     auto_authenticate=True,

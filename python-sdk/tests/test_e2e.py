@@ -18,7 +18,8 @@ def space(fresh_keypair, symmetric_root, base_url):
     space_id = fresh_keypair.to_space_id()
     with Space(
         space_id=space_id,
-        keypair=fresh_keypair,
+        member_id=fresh_keypair.to_user_id(),
+        private_key=fresh_keypair.private_key,
         symmetric_root=symmetric_root,
         base_url=base_url,
     ) as s:
@@ -36,7 +37,8 @@ class TestAuthentication:
         space_id = fresh_keypair.to_space_id()
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
             auto_authenticate=True,
@@ -308,3 +310,18 @@ class TestCreateInvitation:
         )
         assert tool1["tool_id"] == keypair1.to_tool_id()
         assert tool2["tool_id"] == keypair2.to_tool_id()
+
+    def test_create_and_use_invitation(self, space):
+        # Create a new invitation tool
+        tool_keypair = space.create_invitation()
+        # Generate the keypair for a new user
+        new_user_keypair = generate_keypair()
+        new_user_id = new_user_keypair.to_user_id()
+        # Connect to the space as the tool
+        tool_space = Space(space.space_id, tool_keypair.to_tool_id(), tool_keypair.private_key, space.symmetric_root, space.base_url)
+        # Use the tool to add the user in the space
+        tool_space.add_user(new_user_id)
+        # Use the tool to add the user to the "user group"
+        tool_space.assign_role_to_user(new_user_id, "user")
+        # Connect to the space as the new user
+        user_space = Space(space.space_id, new_user_keypair.to_user_id(), new_user_keypair.private_key, space.symmetric_root, space.base_url)

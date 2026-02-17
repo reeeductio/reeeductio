@@ -25,7 +25,7 @@ def compute_data_signature(
     """
     Compute signature for data entry.
 
-    Signature is over: space_id|path|data|signed_at
+    Signature is over: space_id|path|base64(data)|signed_at
 
     Args:
         space_id: Typed space identifier
@@ -37,8 +37,11 @@ def compute_data_signature(
     Returns:
         64-byte signature
     """
-    # Signature is over: space_id|path|data|signed_at
-    sig_input = f"{space_id}|{path}|".encode() + data + f"|{signed_at}".encode()
+    # Signature is over: space_id|path|base64(data)|signed_at
+    # The server verifies against the base64-encoded data string from the JSON body,
+    # so we must sign over the same base64 representation.
+    data_b64 = encode_base64(data)
+    sig_input = f"{space_id}|{path}|{data_b64}|{signed_at}".encode()
     return sign_data(sig_input, private_key)
 
 

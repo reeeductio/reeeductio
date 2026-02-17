@@ -725,7 +725,8 @@ class TestBlobCommandsE2E:
         space_id = fresh_keypair.to_space_id()
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=E2E_BASE_URL,
         ) as space:
@@ -748,7 +749,8 @@ class TestBlobCommandsE2E:
         # Verify the blob is actually gone
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=E2E_BASE_URL,
         ) as space:
@@ -1034,7 +1036,8 @@ class TestAASpaceCreateE2E:
         # Verify we can use the newly created space with its credentials
         with Space(
             space_id=new_space_id,
-            keypair=new_keypair,
+            member_id=new_keypair.to_user_id(),
+            private_key=new_keypair.private_key,
             symmetric_root=new_sym_root,
             base_url=E2E_BASE_URL,
         ) as space:

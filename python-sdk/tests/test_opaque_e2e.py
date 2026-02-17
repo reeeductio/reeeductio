@@ -43,7 +43,8 @@ class TestEnableOpaque:
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
@@ -80,7 +81,8 @@ class TestEnableOpaque:
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
@@ -108,7 +110,8 @@ class TestOpaqueRegistrationAndLogin:
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
@@ -138,7 +141,8 @@ class TestOpaqueRegistrationAndLogin:
             # Create a new Space with the recovered credentials
             with Space(
                 space_id=space_id,
-                keypair=credentials.keypair,
+                member_id=credentials.keypair.to_user_id(),
+                private_key=credentials.keypair.private_key,
                 symmetric_root=credentials.symmetric_root,
                 base_url=base_url,
             ) as recovered_space:
@@ -159,7 +163,8 @@ class TestOpaqueRegistrationAndLogin:
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
@@ -203,7 +208,8 @@ class TestOpaqueRegistrationAndLogin:
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
@@ -232,7 +238,8 @@ class TestOpaqueRegistrationAndLogin:
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
@@ -260,7 +267,8 @@ class TestAuthorizationUtilities:
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
@@ -280,18 +288,19 @@ class TestAuthorizationUtilities:
     def test_create_and_manage_users(
         self, fresh_keypair, symmetric_root, base_url
     ):
-        """create_user should store user data at the correct path."""
+        """add_user should store user data at the correct path."""
         space_id = fresh_keypair.to_space_id()
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
             # Create a user entry
             user_id = fresh_keypair.to_user_id()
-            result = space.create_user(user_id, "Test user")
+            result = space.add_user(user_id, "Test user")
 
             assert result.message_hash is not None
 
@@ -309,7 +318,8 @@ class TestAuthorizationUtilities:
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
@@ -340,7 +350,8 @@ class TestAuthorizationUtilities:
 
         with Space(
             space_id=space_id,
-            keypair=fresh_keypair,
+            member_id=fresh_keypair.to_user_id(),
+            private_key=fresh_keypair.private_key,
             symmetric_root=symmetric_root,
             base_url=base_url,
         ) as space:
@@ -350,7 +361,7 @@ class TestAuthorizationUtilities:
 
             # Create a user
             user_id = fresh_keypair.to_user_id()
-            space.create_user(user_id)
+            space.add_user(user_id)
 
             # Assign the role to the user
             space.assign_role_to_user(user_id, role_name)
