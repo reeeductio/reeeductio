@@ -19,6 +19,8 @@ ENV/
 .coverage
 htmlcov/
 *.db
+spaces/
+blobs/
 
 # IDEs
 .vscode/
@@ -39,3 +41,7 @@ htmlcov/
 .env
 .env.local
 *.log
+
+# Local config files that might contain secrets
+config*.yaml
+*.txt
