@@ -521,7 +521,7 @@ export class Space {
       prevHash = msgs.messages.length > 0 ? msgs.messages[0].message_hash : null;
     }
 
-    return postMessage(
+    const message = await postMessage(
       this.fetchFn,
       this.baseUrl,
       token,
@@ -533,6 +533,13 @@ export class Space {
       this.getUserId(),
       this.keyPair.privateKey
     );
+
+    // Cache the posted message locally so subsequent prev_hash lookups are fresh
+    if (this.localStore) {
+      await this.localStore.putMessage(this.spaceId, message);
+    }
+
+    return message;
   }
 
   /**
@@ -711,6 +718,77 @@ export class Space {
   async getWebSocketConnectionUrl(): Promise<string> {
     const token = await this.auth.getToken();
     return `${this.getWebSocketUrl()}?token=${token}`;
+  }
+
+  /**
+   * Process an incoming WebSocket message and store it in the local cache.
+   *
+   * Call this from your WebSocket `onmessage` handler after parsing the
+   * message JSON. This keeps the local store in sync so that operations
+   * like `postMessage` (which looks up the latest `prev_hash`) use
+   * up-to-date chain state.
+   *
+   * If the message's `prev_hash` doesn't match the latest cached message,
+   * missing messages are fetched from the server to fill the gap before
+   * storing the new message.
+   *
+   * @param message - Parsed Message object from the WebSocket stream
+   * @throws ChainError if the message hash doesn't verify or the chain
+   *   cannot be connected after gap filling
+   */
+  async handleIncomingMessage(message: Message): Promise<void> {
+    // Verify the message hash
+    if (!verifyMessageHash(this.spaceId, message)) {
+      throw new ChainError(`Message hash verification failed for ${message.message_hash}`);
+    }
+
+    if (!this.localStore) {
+      return;
+    }
+
+    // Check if we already have this message
+    const existing = await this.localStore.getMessage(
+      this.spaceId, message.topic_id, message.message_hash
+    );
+    if (existing) {
+      return;
+    }
+
+    // Check chain continuity: does the new message link to our latest?
+    const latestCached = await this.localStore.getLatestMessage(
+      this.spaceId, message.topic_id
+    );
+
+    if (latestCached && message.prev_hash !== null &&
+        message.prev_hash !== latestCached.message_hash) {
+      // Gap detected — fetch missing messages from the server
+      const gapMessages = await this._fetchGapMessages(
+        message.topic_id,
+        latestCached.message_hash,
+        message.prev_hash
+      );
+
+      if (gapMessages.length > 0) {
+        // Verify the gap connects to our cached chain
+        const earliestGap = gapMessages[0];
+        if (earliestGap.prev_hash !== latestCached.message_hash) {
+          throw new ChainError(
+            `Chain gap could not be filled: earliest fetched message's prev_hash ` +
+            `(${earliestGap.prev_hash}) does not match cached head (${latestCached.message_hash})`
+          );
+        }
+
+        await this.localStore.putMessages(this.spaceId, gapMessages);
+      } else {
+        // No gap messages found but prev_hash doesn't match — broken chain
+        throw new ChainError(
+          `Chain discontinuity: message prev_hash (${message.prev_hash}) ` +
+          `does not match cached head (${latestCached.message_hash}) and no gap messages found`
+        );
+      }
+    }
+
+    await this.localStore.putMessage(this.spaceId, message);
   }
 
   // ============================================================

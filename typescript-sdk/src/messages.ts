@@ -78,7 +78,7 @@ export async function postMessage(
   prevHash: string | null,
   senderPublicKeyTyped: string,
   senderPrivateKey: Uint8Array
-): Promise<MessageCreated> {
+): Promise<Message> {
   // Base64 encode the data first (needed for hash and request body)
   const dataBase64 = encodeBase64(data);
 
@@ -95,6 +95,7 @@ export async function postMessage(
   // Sign the message hash (sign the typed identifier bytes)
   const messageHashBytes = decodeUrlSafeBase64(messageHash);
   const signature = await signData(messageHashBytes, senderPrivateKey);
+  const signatureBase64 = encodeBase64(signature);
 
   // Create request body
   const body = {
@@ -102,7 +103,7 @@ export async function postMessage(
     prev_hash: prevHash,
     data: dataBase64,
     message_hash: messageHash,
-    signature: encodeBase64(signature),
+    signature: signatureBase64,
   };
 
   // Post message
@@ -137,7 +138,18 @@ export async function postMessage(
     messageHash: created.message_hash,
     serverTimestamp: created.server_timestamp,
   });
-  return created;
+
+  // Return full Message for local caching
+  return {
+    message_hash: created.message_hash,
+    topic_id: topicId,
+    type: msgType,
+    prev_hash: prevHash,
+    data: dataBase64,
+    sender: senderPublicKeyTyped,
+    signature: signatureBase64,
+    server_timestamp: created.server_timestamp,
+  };
 }
 
 /**

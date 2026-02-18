@@ -8,7 +8,6 @@ import {
   signData,
   encodeBase64,
   stringToBytes,
-  concatBytes,
 } from './crypto.js';
 import { debugLog, errorLog } from './debug.js';
 import type {
@@ -21,7 +20,7 @@ import { createApiError, NotFoundError } from './exceptions.js';
 /**
  * Compute signature for data entry.
  *
- * Signature is over: space_id|path|data|signed_at
+ * Signature is over: space_id|path|base64(data)|signed_at
  *
  * @param spaceId - Typed space identifier
  * @param path - Data path
@@ -37,10 +36,11 @@ export async function computeDataSignature(
   signedAt: number,
   privateKey: Uint8Array
 ): Promise<Uint8Array> {
-  // Signature is over: space_id|path|data|signed_at
-  const prefix = stringToBytes(`${spaceId}|${path}|`);
-  const suffix = stringToBytes(`|${signedAt}`);
-  const sigInput = concatBytes(prefix, data, suffix);
+  // Signature is over: space_id|path|base64(data)|signed_at
+  // The server verifies against the base64-encoded data string from the JSON body,
+  // so we must sign over the same base64 representation.
+  const dataB64 = encodeBase64(data);
+  const sigInput = stringToBytes(`${spaceId}|${path}|${dataB64}|${signedAt}`);
   return signData(sigInput, privateKey);
 }
 
