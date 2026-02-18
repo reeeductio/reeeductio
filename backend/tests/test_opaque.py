@@ -24,27 +24,16 @@ import conftest
 authenticate_with_challenge = conftest.authenticate_with_challenge
 sign_and_store_data = conftest.sign_and_store_data
 
-# Check if opaque_snake is available
-try:
-    from opaque_snake import (
-        OpaqueServer,
-        OpaqueClient,
-        RegistrationRequest,
-        RegistrationResponse,
-        RegistrationUpload,
-        CredentialRequest,
-        CredentialResponse,
-        CredentialFinalization,
-        PasswordFile,
-    )
-    OPAQUE_AVAILABLE = True
-except ImportError:
-    OPAQUE_AVAILABLE = False
-
-# Skip all tests in this module if opaque_snake is not installed
-pytestmark = pytest.mark.skipif(
-    not OPAQUE_AVAILABLE,
-    reason="opaque_snake not installed (pip install opaque-snake)"
+from opaque_snake import (
+    OpaqueServer,
+    OpaqueClient,
+    RegistrationRequest,
+    RegistrationResponse,
+    RegistrationUpload,
+    CredentialRequest,
+    CredentialResponse,
+    CredentialFinalization,
+    PasswordFile,
 )
 
 

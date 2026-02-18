@@ -1067,7 +1067,6 @@ class Space:
             The username that was registered
 
         Raises:
-            OpaqueNotAvailableError: If opaque_snake is not installed
             OpaqueNotEnabledError: If OPAQUE is not enabled for this space
             OpaqueError: If registration fails
             ValidationError: If username already exists or user_id doesn't match private_key
@@ -1125,7 +1124,6 @@ class Space:
             - capability_created: True if CREATE capability was added
 
         Raises:
-            OpaqueNotAvailableError: If opaque_snake is not installed
             ValidationError: If operation fails (usually due to insufficient permissions)
 
         Example:
@@ -2627,7 +2625,6 @@ class AsyncSpace:
             The username that was registered
 
         Raises:
-            OpaqueNotAvailableError: If opaque_snake is not installed
             OpaqueNotEnabledError: If OPAQUE is not enabled for this space
             OpaqueError: If registration fails
             ValidationError: If username already exists or user_id doesn't match private_key
@@ -2684,7 +2681,6 @@ class AsyncSpace:
             - capability_created: True if CREATE capability was added
 
         Raises:
-            OpaqueNotAvailableError: If opaque_snake is not installed
             ValidationError: If operation fails (usually due to insufficient permissions)
 
         Example:

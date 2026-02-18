@@ -40,9 +40,6 @@ only-include = [
     "example_client.py",
 ]
 
-[tool.uv.sources]
-opaque_snake = { path = "../opaque-snake" }
-
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 python_files = ["test_*.py"]

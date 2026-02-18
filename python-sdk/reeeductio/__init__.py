@@ -31,7 +31,6 @@ from .exceptions import (
     NetworkError,
     NotFoundError,
     OpaqueError,
-    OpaqueNotAvailableError,
     OpaqueNotEnabledError,
     ReeeductioError,
     StreamError,
@@ -116,6 +115,5 @@ __all__ = [
     "NetworkError",
     "StreamError",
     "OpaqueError",
-    "OpaqueNotAvailableError",
     "OpaqueNotEnabledError",
 ]

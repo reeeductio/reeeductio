@@ -14,6 +14,6 @@
 14. ~~Rename "new" Python sdk to just python-sdk~~ ✓
 15. Add developer docs with hints on how to build a chat app or a forum etc
 16. Add developer docs for setting up the backend server
-17. Submit opaque_snake and python-sdk to pypi
+17. ~~Submit opaque_snake~~ and python-sdk to pypi
 18. Submit typescript-sdk to npm
 19. Submit backend container image to docker.com

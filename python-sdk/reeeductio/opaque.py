@@ -17,37 +17,26 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
 import httpx
 
 from .crypto import Ed25519KeyPair, decode_base64, derive_key, encrypt_aes_gcm, decrypt_aes_gcm, encode_base64
+from opaque_snake import (
+    OpaqueClient,
+    RegistrationRequest,
+    RegistrationResponse,
+    CredentialRequest,
+    CredentialResponse,
+    CredentialFinalization,
+    ClientRegistrationState,
+    ClientLoginState,
+)
+
 from .exceptions import (
     AuthenticationError,
     OpaqueError,
-    OpaqueNotAvailableError,
     OpaqueNotEnabledError,
     ValidationError,
 )
-
-# Optional OPAQUE support
-try:
-    from opaque_snake import (
-        OpaqueClient,
-        RegistrationRequest,
-        RegistrationResponse,
-        CredentialRequest,
-        CredentialResponse,
-        CredentialFinalization,
-        ClientRegistrationState,
-        ClientLoginState,
-    )
-    OPAQUE_AVAILABLE = True
-except ImportError:
-    OPAQUE_AVAILABLE = False
-
-if TYPE_CHECKING:
-    from opaque_snake import OpaqueClient
 
 # HKDF info string for credential wrapping (must match backend)
 CREDENTIAL_WRAP_INFO = "reeeductio-credential-wrap"
@@ -66,19 +55,6 @@ class OpaqueCredentials:
     keypair: Ed25519KeyPair
     symmetric_root: bytes
     public_key: str
-
-
-def check_opaque_available() -> None:
-    """
-    Check if OPAQUE support is available.
-
-    Raises:
-        OpaqueNotAvailableError: If opaque_snake is not installed
-    """
-    if not OPAQUE_AVAILABLE:
-        raise OpaqueNotAvailableError(
-            "OPAQUE is not available. Install opaque_snake: pip install opaque-snake"
-        )
 
 
 def wrap_credentials(export_key: bytes, private_key: bytes, symmetric_root: bytes) -> bytes:
@@ -156,7 +132,6 @@ def opaque_login(
         OpaqueCredentials containing keypair, symmetric_root, and public_key
 
     Raises:
-        OpaqueNotAvailableError: If opaque_snake is not installed
         OpaqueNotEnabledError: If OPAQUE is not enabled for this space
         OpaqueError: If OPAQUE protocol fails
         AuthenticationError: If password is incorrect
@@ -178,7 +153,6 @@ def opaque_login(
             base_url=base_url,
         )
     """
-    check_opaque_available()
 
     with httpx.Client(base_url=base_url) as client:
         # Step 1: Create client-side OPAQUE state and credential request
@@ -272,7 +246,6 @@ async def opaque_login_async(
 
     See opaque_login for full documentation.
     """
-    check_opaque_available()
 
     async with httpx.AsyncClient(base_url=base_url) as client:
         # Step 1: Create client-side OPAQUE state and credential request
@@ -390,12 +363,10 @@ def opaque_register(
         The username that was registered
 
     Raises:
-        OpaqueNotAvailableError: If opaque_snake is not installed
         OpaqueNotEnabledError: If OPAQUE is not enabled for this space
         OpaqueError: If registration fails
         ValidationError: If username already exists or user_id doesn't match private_key
     """
-    check_opaque_available()
 
     # Verify user_id matches private_key
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -521,7 +492,6 @@ async def opaque_register_async(
 
     See opaque_register for full documentation.
     """
-    check_opaque_available()
 
     # Verify user_id matches private_key
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey

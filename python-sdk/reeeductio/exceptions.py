@@ -69,12 +69,6 @@ class OpaqueError(ReeeductioError):
     pass
 
 
-class OpaqueNotAvailableError(OpaqueError):
-    """Raised when OPAQUE is not available (opaque_snake not installed)."""
-
-    pass
-
-
 class OpaqueNotEnabledError(OpaqueError):
     """Raised when OPAQUE is not enabled for a space."""
 
