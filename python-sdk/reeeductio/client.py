@@ -1134,13 +1134,10 @@ class Space:
                 print("OPAQUE server setup created")
         """
         from .opaque import (
-            check_opaque_available,
             OPAQUE_SERVER_SETUP_PATH,
             OPAQUE_USER_ROLE_ID,
             OPAQUE_USER_CAP_ID,
         )
-
-        check_opaque_available()
 
         # Import OpaqueServer only after checking availability
         from opaque_snake import OpaqueServer
@@ -2690,13 +2687,10 @@ class AsyncSpace:
                     print("OPAQUE server setup created")
         """
         from .opaque import (
-            check_opaque_available,
             OPAQUE_SERVER_SETUP_PATH,
             OPAQUE_USER_ROLE_ID,
             OPAQUE_USER_CAP_ID,
         )
-
-        check_opaque_available()
 
         # Import OpaqueServer only after checking availability
         from opaque_snake import OpaqueServer
