@@ -654,6 +654,9 @@ async def list_state(
             raise HTTPException(status_code=403, detail=error_msg)
         else:
             raise HTTPException(status_code=401, detail=error_msg)
+    except Exception as e:
+        logger.error(f"Error fetching state messages: space={space_id}, error={e}")
+        raise HTTPException(status_code=503, detail="Message store unavailable")
 
 
 @app.get("/spaces/{space_id}/state/{path:path}", response_model=Message)
@@ -749,6 +752,9 @@ async def get_messages(
             raise HTTPException(status_code=403, detail=error_msg)
         else:
             raise HTTPException(status_code=401, detail=error_msg)
+    except Exception as e:
+        logger.error(f"Error fetching messages: space={space_id}, topic={topic_id}, error={e}")
+        raise HTTPException(status_code=503, detail="Message store unavailable")
 
 
 @app.post("/spaces/{space_id}/topics/{topic_id}/messages", status_code=201)
