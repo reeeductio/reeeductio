@@ -23,7 +23,7 @@ _COMPOSE_FILE = os.path.join(
 # Admin credentials from backend/config.e2e.yaml
 # Private key: 32 bytes of 0x01
 ADMIN_PRIVATE_KEY = b"\x01" * 32
-ADMIN_SPACE_ID = "CIqI4910CfGV_VLbLTy6XXLKZwm_HZQSG_N0iAG0D29c"
+ADMIN_SPACE_ID = "SIqI4910CfGV_VLbLTy6XXLKZwm_HZQSG_N0iAG0D29c"
 
 
 def _keypair_from_private(private_bytes: bytes) -> Ed25519KeyPair:

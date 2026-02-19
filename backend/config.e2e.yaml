@@ -39,7 +39,7 @@ logging:
 # These credentials are generated from a deterministic test key (32 bytes of 0x01)
 # DO NOT use these credentials in production!
 admin:
-  space_id: "CIqI4910CfGV_VLbLTy6XXLKZwm_HZQSG_N0iAG0D29c"
+  space_id: "SIqI4910CfGV_VLbLTy6XXLKZwm_HZQSG_N0iAG0D29c"
   user_id: "UIqI4910CfGV_VLbLTy6XXLKZwm_HZQSG_N0iAG0D29c"
   private_key: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
   auto_create_spaces: true

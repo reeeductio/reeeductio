@@ -69,8 +69,8 @@ logging:
 
 # Admin space configuration
 # admin:
-#   space_id: C_...         # Admin space ID (enables admin API when set)
-#   user_id: U_...          # Admin user ID for server-initiated operations
+#   space_id: S...         # Admin space ID (enables admin API when set)
+#   user_id: U...          # Admin user ID for server-initiated operations
 #   private_key: base64...  # Base64-encoded Ed25519 private key for admin user
 #   auto_create_spaces: false  # If true, allow spaces without admin registration
 

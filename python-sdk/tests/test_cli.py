@@ -47,7 +47,7 @@ class TestSpaceCommands:
         assert "public_key_hex" in data
         assert "symmetric_root_hex" in data
         # Verify formats
-        assert data["space_id"].startswith("C")
+        assert data["space_id"].startswith("S")
         assert data["user_id"].startswith("U")
         assert len(data["private_key_hex"]) == 64
         assert len(data["symmetric_root_hex"]) == 64
@@ -179,7 +179,7 @@ class TestKeyCommands:
         assert len(data["private_key_hex"]) == 64
         assert len(data["public_key_hex"]) == 64
         assert data["user_id"].startswith("U")
-        assert data["space_id"].startswith("C")
+        assert data["space_id"].startswith("S")
         assert data["tool_id"].startswith("T")
 
     def test_key_generate_unique_keys(self, runner):
@@ -1012,7 +1012,7 @@ class TestAASpaceCreateE2E:
 
         # Verify the returned data has the expected structure
         assert "space_id" in data
-        assert data["space_id"].startswith("C")  # Space IDs start with C
+        assert data["space_id"].startswith("S")  # Space IDs start with S
         assert "private_key_hex" in data
         assert len(data["private_key_hex"]) == 64  # 32 bytes in hex
         assert "public_key_hex" in data
