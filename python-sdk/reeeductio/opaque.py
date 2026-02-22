@@ -50,14 +50,16 @@ class OpaqueCredentials:
     Attributes:
         keypair: Ed25519 key pair for authentication and signing
         symmetric_root: 256-bit root key for HKDF derivation
+        user_symmetric_key: 256-bit user-private key (not shared with the space)
         public_key: User's public key identifier (44-char base64)
     """
     keypair: Ed25519KeyPair
     symmetric_root: bytes
+    user_symmetric_key: bytes
     public_key: str
 
 
-def wrap_credentials(export_key: bytes, private_key: bytes, symmetric_root: bytes) -> bytes:
+def wrap_credentials(export_key: bytes, private_key: bytes, symmetric_root: bytes, user_symmetric_key: bytes) -> bytes:
     """
     Wrap credentials using a key derived from OPAQUE's export_key.
 
@@ -65,6 +67,7 @@ def wrap_credentials(export_key: bytes, private_key: bytes, symmetric_root: byte
         export_key: OPAQUE export_key from registration/login
         private_key: 32-byte Ed25519 private key
         symmetric_root: 32-byte symmetric root key
+        user_symmetric_key: 32-byte user-private key
 
     Returns:
         AES-GCM encrypted credentials (nonce + ciphertext + tag)
@@ -72,14 +75,14 @@ def wrap_credentials(export_key: bytes, private_key: bytes, symmetric_root: byte
     # Derive wrapping key from export_key
     wrap_key = derive_key(export_key, CREDENTIAL_WRAP_INFO)
 
-    # Concatenate credentials: privateKey (32) || symmetricRoot (32) = 64 bytes
-    plaintext = private_key + symmetric_root
+    # Concatenate credentials: privateKey (32) || symmetricRoot (32) || userSymmetricKey (32) = 96 bytes
+    plaintext = private_key + symmetric_root + user_symmetric_key
 
     # Encrypt with AES-GCM
     return encrypt_aes_gcm(plaintext, wrap_key)
 
 
-def unwrap_credentials(export_key: bytes, encrypted_credentials: bytes) -> tuple[bytes, bytes]:
+def unwrap_credentials(export_key: bytes, encrypted_credentials: bytes) -> tuple[bytes, bytes, bytes]:
     """
     Unwrap credentials using a key derived from OPAQUE's export_key.
 
@@ -88,7 +91,7 @@ def unwrap_credentials(export_key: bytes, encrypted_credentials: bytes) -> tuple
         encrypted_credentials: AES-GCM encrypted credentials
 
     Returns:
-        Tuple of (private_key, symmetric_root)
+        Tuple of (private_key, symmetric_root, user_symmetric_key)
 
     Raises:
         ValueError: If decryption fails
@@ -99,14 +102,15 @@ def unwrap_credentials(export_key: bytes, encrypted_credentials: bytes) -> tuple
     # Decrypt
     plaintext = decrypt_aes_gcm(encrypted_credentials, wrap_key)
 
-    # Split: privateKey (32) || symmetricRoot (32)
-    if len(plaintext) != 64:
-        raise ValueError(f"Invalid credential length: expected 64 bytes, got {len(plaintext)}")
+    # Split: privateKey (32) || symmetricRoot (32) || userSymmetricKey (32)
+    if len(plaintext) != 96:
+        raise ValueError(f"Invalid credential length: expected 96 bytes, got {len(plaintext)}")
 
     private_key = plaintext[:32]
-    symmetric_root = plaintext[32:]
+    symmetric_root = plaintext[32:64]
+    user_symmetric_key = plaintext[64:]
 
-    return private_key, symmetric_root
+    return private_key, symmetric_root, user_symmetric_key
 
 
 def opaque_login(
@@ -150,6 +154,7 @@ def opaque_login(
             member_id=credentials.keypair.to_user_id(),
             private_key=credentials.keypair.private_key,
             symmetric_root=credentials.symmetric_root,
+            user_symmetric_key=credentials.user_symmetric_key,
             base_url=base_url,
         )
     """
@@ -220,7 +225,7 @@ def opaque_login(
         public_key = finish_data["public_key"]
 
         try:
-            private_key, symmetric_root = unwrap_credentials(export_key, encrypted_credentials)
+            private_key, symmetric_root, user_symmetric_key = unwrap_credentials(export_key, encrypted_credentials)
         except Exception as e:
             raise OpaqueError(f"Failed to unwrap credentials: {e}") from e
 
@@ -231,6 +236,7 @@ def opaque_login(
         return OpaqueCredentials(
             keypair=Ed25519KeyPair(private_key=private_key, public_key=raw_public_key),
             symmetric_root=symmetric_root,
+            user_symmetric_key=user_symmetric_key,
             public_key=public_key,
         )
 
@@ -313,7 +319,7 @@ async def opaque_login_async(
         public_key = finish_data["public_key"]
 
         try:
-            private_key, symmetric_root = unwrap_credentials(export_key, encrypted_credentials)
+            private_key, symmetric_root, user_symmetric_key = unwrap_credentials(export_key, encrypted_credentials)
         except Exception as e:
             raise OpaqueError(f"Failed to unwrap credentials: {e}") from e
 
@@ -323,6 +329,7 @@ async def opaque_login_async(
         return OpaqueCredentials(
             keypair=Ed25519KeyPair(private_key=private_key, public_key=raw_public_key),
             symmetric_root=symmetric_root,
+            user_symmetric_key=user_symmetric_key,
             public_key=public_key,
         )
 
@@ -335,6 +342,7 @@ def opaque_register(
     user_id: str,
     private_key: bytes,
     symmetric_root: bytes,
+    user_symmetric_key: bytes,
 ) -> str:
     """
     Register OPAQUE credentials for password-based login.
@@ -358,6 +366,7 @@ def opaque_register(
         user_id: Typed identifier string (USER or TOOL) for the public key
         private_key: 32-byte Ed25519 private key matching user_id
         symmetric_root: Symmetric root key to wrap
+        user_symmetric_key: 32-byte user-private key to wrap
 
     Returns:
         The username that was registered
@@ -453,7 +462,7 @@ def opaque_register(
     password_file = finish_data["password_file"]
 
     # Step 7: Wrap credentials with export_key
-    encrypted_credentials = wrap_credentials(export_key, private_key, symmetric_root)
+    encrypted_credentials = wrap_credentials(export_key, private_key, symmetric_root, user_symmetric_key)
     encrypted_credentials_b64 = base64.b64encode(encrypted_credentials).decode("ascii")
 
     # Step 8: Assemble complete OPAQUE record
@@ -486,6 +495,7 @@ async def opaque_register_async(
     user_id: str,
     private_key: bytes,
     symmetric_root: bytes,
+    user_symmetric_key: bytes,
 ) -> str:
     """
     Async version of opaque_register.
@@ -578,7 +588,7 @@ async def opaque_register_async(
     password_file = finish_data["password_file"]
 
     # Step 7: Wrap credentials
-    encrypted_credentials = wrap_credentials(export_key, private_key, symmetric_root)
+    encrypted_credentials = wrap_credentials(export_key, private_key, symmetric_root, user_symmetric_key)
     encrypted_credentials_b64 = base64.b64encode(encrypted_credentials).decode("ascii")
 
     # Step 8: Assemble record

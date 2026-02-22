@@ -26,6 +26,21 @@ def space(fresh_keypair, symmetric_root, base_url):
         yield s
 
 
+@pytest.fixture
+def space_with_user_key(fresh_keypair, symmetric_root, user_symmetric_key, base_url):
+    """Create a Space client with a user-private symmetric key."""
+    space_id = fresh_keypair.to_space_id()
+    with Space(
+        space_id=space_id,
+        member_id=fresh_keypair.to_user_id(),
+        private_key=fresh_keypair.private_key,
+        symmetric_root=symmetric_root,
+        user_symmetric_key=user_symmetric_key,
+        base_url=base_url,
+    ) as s:
+        yield s
+
+
 class TestAuthentication:
     def test_authenticate_returns_token(self, space):
         token = space.authenticate()
@@ -134,6 +149,15 @@ class TestEncryptedState:
         result = space.get_encrypted_state(path)
         assert result == "new secret"
 
+    def test_custom_key_round_trips(self, space):
+        """set/get_encrypted_state with an explicit key should round-trip."""
+        from reeeductio.crypto import derive_key
+        custom_key = derive_key(os.urandom(32), "test-custom-state-key")
+        path = f"test/enc-state/{uuid.uuid4().hex[:8]}"
+        space.set_encrypted_state(path, "state with custom key", key=custom_key)
+        result = space.get_encrypted_state(path, key=custom_key)
+        assert result == "state with custom key"
+
 
 class TestStateHistory:
     def test_state_history(self, space):
@@ -221,6 +245,16 @@ class TestEncryptedKVData:
         space.set_encrypted_data(path, data)
         raw = space.get_plaintext_data(path)
         assert raw != data
+
+    def test_custom_key_round_trips(self, space):
+        """set/get_encrypted_data with an explicit key should round-trip."""
+        from reeeductio.crypto import derive_key
+        custom_key = derive_key(os.urandom(32), "test-custom-key")
+        path = f"test/enc-data/{uuid.uuid4().hex[:8]}"
+        data = b"data encrypted with custom key"
+        space.set_encrypted_data(path, data, key=custom_key)
+        result = space.get_encrypted_data(path, key=custom_key)
+        assert result == data
 
 
 class TestCreateTool:
@@ -325,3 +359,41 @@ class TestCreateInvitation:
         tool_space.assign_role_to_user(new_user_id, "user")
         # Connect to the space as the new user
         user_space = Space(space.space_id, new_user_keypair.to_user_id(), new_user_keypair.private_key, space.symmetric_root, space.base_url)
+
+class TestUserPrivateKVData:
+    def test_set_and_get_user_data(self, space_with_user_key):
+        """Round-trip through set/get_encrypted_user_data."""
+        path = f"notes/{uuid.uuid4().hex[:8]}"
+        data = b"private user data"
+        ts = space_with_user_key.set_encrypted_user_data(path, data)
+        assert ts > 0
+        result = space_with_user_key.get_encrypted_user_data(path)
+        assert result == data
+
+    def test_user_data_is_encrypted(self, space_with_user_key):
+        """Reading user-private data as plaintext should NOT match the original."""
+        path = f"notes/{uuid.uuid4().hex[:8]}"
+        data = b"private user data"
+        space_with_user_key.set_encrypted_user_data(path, data)
+        member_id = space_with_user_key.member_id
+        raw = space_with_user_key.get_plaintext_data(f"user/{member_id}/{path}")
+        assert raw != data
+
+    def test_user_data_stored_under_member_namespace(self, space_with_user_key):
+        """Data should be readable at the full namespaced path."""
+        path = f"notes/{uuid.uuid4().hex[:8]}"
+        data = b"namespaced private data"
+        space_with_user_key.set_encrypted_user_data(path, data)
+        member_id = space_with_user_key.member_id
+        result = space_with_user_key.get_encrypted_data(
+            f"user/{member_id}/{path}",
+            key=space_with_user_key.user_data_key,
+        )
+        assert result == data
+
+    def test_raises_without_user_key(self, space):
+        """Methods should raise ValueError when user_symmetric_key was not provided."""
+        with pytest.raises(ValueError, match="user_symmetric_key"):
+            space.set_encrypted_user_data("notes/test", b"data")
+        with pytest.raises(ValueError, match="user_symmetric_key"):
+            space.get_encrypted_user_data("notes/test")

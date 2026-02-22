@@ -131,6 +131,12 @@ def symmetric_root() -> bytes:
 
 
 @pytest.fixture
+def user_symmetric_key() -> bytes:
+    """Generate a fresh random user-private symmetric key."""
+    return os.urandom(32)
+
+
+@pytest.fixture
 def space_id(fresh_keypair: Ed25519KeyPair) -> str:
     """Space ID derived from the fresh keypair."""
     return fresh_keypair.to_space_id()

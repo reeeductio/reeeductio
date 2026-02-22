@@ -39,10 +39,14 @@ class Space:
         member_id: Typed member identifier (U_... for users, T_... for tools)
         private_key: Raw 32-byte Ed25519 private key
         symmetric_root: 256-bit root key for HKDF derivation
+        user_symmetric_key: Optional 256-bit user-private key (not shared with space)
         message_key: Derived key for message encryption (32 bytes)
         blob_key: Derived key for blob encryption (32 bytes)
         state_key: Derived key for state encryption (32 bytes)
         data_key: Derived key for data encryption (32 bytes)
+        user_message_key: User-private message key (None if no user_symmetric_key)
+        user_blob_key: User-private blob key (None if no user_symmetric_key)
+        user_data_key: User-private data key (None if no user_symmetric_key)
         base_url: Base URL of the reeeductio server
         auth: Authentication session manager
     """
@@ -56,6 +60,7 @@ class Space:
         base_url: str = "http://localhost:8000",
         auto_authenticate: bool = True,
         local_store: LocalMessageStore | None = None,
+        user_symmetric_key: bytes | None = None,
     ):
         """
         Initialize Space client.
@@ -69,17 +74,25 @@ class Space:
             auto_authenticate: Whether to authenticate automatically on first request
             local_store: Optional local message store for caching. When provided,
                 messages are cached locally and retrieved from cache when available.
+            user_symmetric_key: Optional 256-bit (32-byte) user-private key for
+                encrypting data that is confidential against other space members.
+                When provided, used to derive user_message_key, user_blob_key, and
+                user_data_key for user-private encryption.
 
         Raises:
             ValueError: If symmetric_root is not exactly 32 bytes
+            ValueError: If user_symmetric_key is provided but not exactly 32 bytes
         """
         if len(symmetric_root) != 32:
             raise ValueError(f"symmetric_root must be exactly 32 bytes, got {len(symmetric_root)}")
+        if user_symmetric_key is not None and len(user_symmetric_key) != 32:
+            raise ValueError(f"user_symmetric_key must be exactly 32 bytes, got {len(user_symmetric_key)}")
 
         self.space_id = space_id
         self.member_id = member_id
         self.private_key = private_key
         self.symmetric_root = symmetric_root
+        self.user_symmetric_key = user_symmetric_key
         self.base_url = base_url
         self._auto_authenticate = auto_authenticate
         self._local_store = local_store
@@ -92,6 +105,18 @@ class Space:
         # State key is actually just a topic key for the "state" topic
         self.state_key = derive_key(self.message_key, "topic key | state")
         # Keys for other topics can be derived as `topic_key = derive_key(self.message_key, f"topic key | {topic_id}")`
+
+        # Derive user-private encryption keys if a user_symmetric_key was provided.
+        # These are confidential against other space members (including admins) because
+        # user_symmetric_key is not shared with the space.
+        if user_symmetric_key is not None:
+            self.user_message_key: bytes | None = derive_key(user_symmetric_key, f"user message key | {space_id}")
+            self.user_blob_key: bytes | None = derive_key(user_symmetric_key, f"user blob key | {space_id}")
+            self.user_data_key: bytes | None = derive_key(user_symmetric_key, f"user data key | {space_id}")
+        else:
+            self.user_message_key = None
+            self.user_blob_key = None
+            self.user_data_key = None
 
         # Create authentication session
         self.auth = AuthSession(
@@ -176,7 +201,7 @@ class Space:
         message = state.get_state(self.client, self.space_id, path)
         return base64.b64decode(message.data).decode("utf-8")
     
-    def get_encrypted_state(self, path: str) -> str:
+    def get_encrypted_state(self, path: str, key: bytes | None = None) -> str:
         """
         Get encrypted state value at path and decrypt it.
 
@@ -185,6 +210,7 @@ class Space:
 
         Args:
             path: State path (e.g., "auth/users/U_abc123", "profiles/alice")
+            key: Decryption key. Defaults to self.state_key if not provided.
 
         Returns:
             Decrypted plaintext string
@@ -202,8 +228,8 @@ class Space:
         # Base64 decode
         encrypted_bytes = base64.b64decode(encrypted_b64)
 
-        # Decrypt using state key
-        plaintext_bytes = decrypt_aes_gcm(encrypted_bytes, self.state_key)
+        # Decrypt using provided key or fall back to state key
+        plaintext_bytes = decrypt_aes_gcm(encrypted_bytes, key if key is not None else self.state_key)
 
         # Convert to string
         return plaintext_bytes.decode("utf-8")
@@ -230,7 +256,7 @@ class Space:
         data_bytes = data.encode("utf-8")
         return self._set_state(path, data_bytes, prev_hash)
 
-    def set_encrypted_state(self, path: str, data: str, prev_hash: str | None = None) -> MessageCreated:
+    def set_encrypted_state(self, path: str, data: str, prev_hash: str | None = None, key: bytes | None = None) -> MessageCreated:
         """
         Set encrypted state value at path.
 
@@ -241,6 +267,7 @@ class Space:
             path: State path (e.g., "auth/users/U_abc123", "profiles/alice")
             data: Plaintext string data to encrypt and store
             prev_hash: Previous message hash in state topic (optional, fetched if not provided)
+            key: Encryption key. Defaults to self.state_key if not provided.
 
         Returns:
             MessageCreated with message_hash and server_timestamp
@@ -252,8 +279,8 @@ class Space:
         # Convert string to bytes
         plaintext_bytes = data.encode("utf-8")
 
-        # Encrypt using state key
-        encrypted_bytes = encrypt_aes_gcm(plaintext_bytes, self.state_key)
+        # Encrypt using provided key or fall back to state key
+        encrypted_bytes = encrypt_aes_gcm(plaintext_bytes, key if key is not None else self.state_key)
 
         # Pass encrypted bytes directly; post_message will base64-encode them
         return self._set_state(path, encrypted_bytes, prev_hash)
@@ -723,7 +750,7 @@ class Space:
         # Data is stored as base64-encoded
         return base64.b64decode(entry.data)
 
-    def get_encrypted_data(self, path: str) -> bytes:
+    def get_encrypted_data(self, path: str, key: bytes | None = None) -> bytes:
         """
         Get encrypted data value at path and decrypt it.
 
@@ -732,6 +759,7 @@ class Space:
 
         Args:
             path: Data path (e.g., "profiles/alice", "settings/theme")
+            key: Decryption key. Defaults to self.data_key if not provided.
 
         Returns:
             Decrypted plaintext data bytes
@@ -745,10 +773,8 @@ class Space:
         # Base64 decode
         encrypted_bytes = base64.b64decode(entry.data)
 
-        # Decrypt using data key
-        plaintext_bytes = decrypt_aes_gcm(encrypted_bytes, self.data_key)
-
-        return plaintext_bytes
+        # Decrypt using provided key or fall back to data key
+        return decrypt_aes_gcm(encrypted_bytes, key if key is not None else self.data_key)
 
     def set_plaintext_data(self, path: str, data: bytes) -> int:
         """
@@ -765,7 +791,7 @@ class Space:
         """
         return self._set_data(path, data)
 
-    def set_encrypted_data(self, path: str, data: bytes) -> int:
+    def set_encrypted_data(self, path: str, data: bytes, key: bytes | None = None) -> int:
         """
         Set encrypted data value at path.
 
@@ -775,15 +801,58 @@ class Space:
         Args:
             path: Data path (e.g., "profiles/alice", "settings/theme")
             data: Plaintext data bytes to encrypt and store
+            key: Encryption key. Defaults to self.data_key if not provided.
 
         Returns:
             Timestamp when the data was signed (milliseconds)
         """
-        # Encrypt using data key
-        encrypted_bytes = encrypt_aes_gcm(data, self.data_key)
+        # Encrypt using provided key or fall back to data key
+        encrypted_bytes = encrypt_aes_gcm(data, key if key is not None else self.data_key)
 
         return self._set_data(path, encrypted_bytes)
 
+    def get_encrypted_user_data(self, path: str) -> bytes:
+        """
+        Get user-private encrypted data at a path relative to this user's namespace.
+
+        Reads from ``user/{member_id}/{path}`` and decrypts with self.user_data_key,
+        which is confidential against other space members and the server.
+
+        Args:
+            path: Relative data path (e.g., "notes", "settings/theme")
+
+        Returns:
+            Decrypted plaintext data bytes
+
+        Raises:
+            ValueError: If user_symmetric_key was not provided to the Space constructor
+            NotFoundError: If no data exists at this path
+            cryptography.exceptions.InvalidTag: If decryption fails
+        """
+        if self.user_data_key is None:
+            raise ValueError("user_symmetric_key is required for user-private encryption")
+        return self.get_encrypted_data(f"user/{self.member_id}/{path}", key=self.user_data_key)
+
+    def set_encrypted_user_data(self, path: str, data: bytes) -> int:
+        """
+        Store user-private encrypted data at a path relative to this user's namespace.
+
+        Encrypts with self.user_data_key (confidential against other space members and
+        the server) and stores at ``user/{member_id}/{path}``.
+
+        Args:
+            path: Relative data path (e.g., "notes", "settings/theme")
+            data: Plaintext data bytes to encrypt and store
+
+        Returns:
+            Timestamp when the data was signed (milliseconds)
+
+        Raises:
+            ValueError: If user_symmetric_key was not provided to the Space constructor
+        """
+        if self.user_data_key is None:
+            raise ValueError("user_symmetric_key is required for user-private encryption")
+        return self.set_encrypted_data(f"user/{self.member_id}/{path}", data, key=self.user_data_key)
 
     def _set_data(self, path: str, data: bytes) -> int:
         """
@@ -1086,6 +1155,7 @@ class Space:
             credentials = opaque_login(base_url, space_id, "alice", "my-secure-password")
         """
         # Import from our local opaque module which wraps opaque_snake
+        import os
         from .opaque import opaque_register as _opaque_register
 
         # Use provided values or derive from self
@@ -1093,6 +1163,11 @@ class Space:
             user_id = self.member_id
         if private_key is None:
             private_key = self.private_key
+
+        # Use the existing user_symmetric_key if present; otherwise generate a fresh
+        # random key so that one is always stored in the credential blob and recovered
+        # at the next opaque_login.
+        user_symmetric_key = self.user_symmetric_key or os.urandom(32)
 
         return _opaque_register(
             client=self.client,
@@ -1102,6 +1177,7 @@ class Space:
             user_id=user_id,
             private_key=private_key,
             symmetric_root=self.symmetric_root,
+            user_symmetric_key=user_symmetric_key,
         )
 
     def enable_opaque(self) -> dict[str, bool]:
@@ -1728,10 +1804,14 @@ class AsyncSpace:
         member_id: Typed member identifier (U_... for users, T_... for tools)
         private_key: Raw 32-byte Ed25519 private key
         symmetric_root: 256-bit root key for HKDF derivation
+        user_symmetric_key: Optional 256-bit user-private key (not shared with space)
         message_key: Derived key for message encryption (32 bytes)
         blob_key: Derived key for blob encryption (32 bytes)
         state_key: Derived key for state encryption (32 bytes)
         data_key: Derived key for data encryption (32 bytes)
+        user_message_key: User-private message key (None if no user_symmetric_key)
+        user_blob_key: User-private blob key (None if no user_symmetric_key)
+        user_data_key: User-private data key (None if no user_symmetric_key)
         base_url: Base URL of the reeeductio server
         auth: Async authentication session manager
     """
@@ -1745,6 +1825,7 @@ class AsyncSpace:
         base_url: str = "http://localhost:8000",
         auto_authenticate: bool = True,
         local_store: LocalMessageStore | None = None,
+        user_symmetric_key: bytes | None = None,
     ):
         """
         Initialize AsyncSpace client.
@@ -1758,17 +1839,25 @@ class AsyncSpace:
             auto_authenticate: Whether to authenticate automatically on first request
             local_store: Optional local message store for caching. When provided,
                 messages are cached locally and retrieved from cache when available.
+            user_symmetric_key: Optional 256-bit (32-byte) user-private key for
+                encrypting data that is confidential against other space members.
+                When provided, used to derive user_message_key, user_blob_key, and
+                user_data_key for user-private encryption.
 
         Raises:
             ValueError: If symmetric_root is not exactly 32 bytes
+            ValueError: If user_symmetric_key is provided but not exactly 32 bytes
         """
         if len(symmetric_root) != 32:
             raise ValueError(f"symmetric_root must be exactly 32 bytes, got {len(symmetric_root)}")
+        if user_symmetric_key is not None and len(user_symmetric_key) != 32:
+            raise ValueError(f"user_symmetric_key must be exactly 32 bytes, got {len(user_symmetric_key)}")
 
         self.space_id = space_id
         self.member_id = member_id
         self.private_key = private_key
         self.symmetric_root = symmetric_root
+        self.user_symmetric_key = user_symmetric_key
         self.base_url = base_url
         self._auto_authenticate = auto_authenticate
         self._local_store = local_store
@@ -1778,6 +1867,18 @@ class AsyncSpace:
         self.blob_key = derive_key(symmetric_root, f"blob key | {space_id}")
         self.data_key = derive_key(symmetric_root, f"data key | {space_id}")
         self.state_key = derive_key(self.message_key, "topic key | state")
+
+        # Derive user-private encryption keys if a user_symmetric_key was provided.
+        # These are confidential against other space members (including admins) because
+        # user_symmetric_key is not shared with the space.
+        if user_symmetric_key is not None:
+            self.user_message_key: bytes | None = derive_key(user_symmetric_key, f"user message key | {space_id}")
+            self.user_blob_key: bytes | None = derive_key(user_symmetric_key, f"user blob key | {space_id}")
+            self.user_data_key: bytes | None = derive_key(user_symmetric_key, f"user data key | {space_id}")
+        else:
+            self.user_message_key = None
+            self.user_blob_key = None
+            self.user_data_key = None
 
         # Create async authentication session
         self.auth = AsyncAuthSession(
@@ -2199,12 +2300,13 @@ class AsyncSpace:
         message = await state.get_state_async(client, self.space_id, path)
         return base64.b64decode(message.data).decode("utf-8")
 
-    async def get_encrypted_state(self, path: str) -> str:
+    async def get_encrypted_state(self, path: str, key: bytes | None = None) -> str:
         """
         Get encrypted state value at path and decrypt it.
 
         Args:
             path: State path
+            key: Decryption key. Defaults to self.state_key if not provided.
 
         Returns:
             Decrypted plaintext string
@@ -2217,7 +2319,7 @@ class AsyncSpace:
             return ""
 
         encrypted_bytes = base64.b64decode(encrypted_b64)
-        plaintext_bytes = decrypt_aes_gcm(encrypted_bytes, self.state_key)
+        plaintext_bytes = decrypt_aes_gcm(encrypted_bytes, key if key is not None else self.state_key)
         return plaintext_bytes.decode("utf-8")
 
     async def set_plaintext_state(self, path: str, data: str, prev_hash: str | None = None) -> MessageCreated:
@@ -2235,7 +2337,7 @@ class AsyncSpace:
         data_bytes = data.encode("utf-8")
         return await self._set_state(path, data_bytes, prev_hash)
 
-    async def set_encrypted_state(self, path: str, data: str, prev_hash: str | None = None) -> MessageCreated:
+    async def set_encrypted_state(self, path: str, data: str, prev_hash: str | None = None, key: bytes | None = None) -> MessageCreated:
         """
         Set encrypted state value at path.
 
@@ -2243,12 +2345,13 @@ class AsyncSpace:
             path: State path
             data: Plaintext string data to encrypt and store
             prev_hash: Previous message hash (optional, fetched if not provided)
+            key: Encryption key. Defaults to self.state_key if not provided.
 
         Returns:
             MessageCreated with message_hash and server_timestamp
         """
         plaintext_bytes = data.encode("utf-8")
-        encrypted_bytes = encrypt_aes_gcm(plaintext_bytes, self.state_key)
+        encrypted_bytes = encrypt_aes_gcm(plaintext_bytes, key if key is not None else self.state_key)
         return await self._set_state(path, encrypted_bytes, prev_hash)
 
     async def _set_state(self, path: str, data: bytes, prev_hash: str | None = None) -> MessageCreated:
@@ -2332,21 +2435,77 @@ class AsyncSpace:
         entry = await kvdata.get_data_async(client, self.space_id, path)
         return base64.b64decode(entry.data)
 
-    async def get_encrypted_data(self, path: str) -> bytes:
-        """Get encrypted data value at path and decrypt it."""
+    async def get_encrypted_data(self, path: str, key: bytes | None = None) -> bytes:
+        """
+        Get encrypted data value at path and decrypt it.
+
+        Args:
+            path: Data path
+            key: Decryption key. Defaults to self.data_key if not provided.
+        """
         client = await self.get_client()
         entry = await kvdata.get_data_async(client, self.space_id, path)
         encrypted_bytes = base64.b64decode(entry.data)
-        return decrypt_aes_gcm(encrypted_bytes, self.data_key)
+        return decrypt_aes_gcm(encrypted_bytes, key if key is not None else self.data_key)
 
     async def set_plaintext_data(self, path: str, data: bytes) -> int:
         """Set plaintext data value at path."""
         return await self._set_data(path, data)
 
-    async def set_encrypted_data(self, path: str, data: bytes) -> int:
-        """Set encrypted data value at path."""
-        encrypted_bytes = encrypt_aes_gcm(data, self.data_key)
+    async def set_encrypted_data(self, path: str, data: bytes, key: bytes | None = None) -> int:
+        """
+        Set encrypted data value at path.
+
+        Args:
+            path: Data path
+            data: Plaintext data bytes to encrypt and store
+            key: Encryption key. Defaults to self.data_key if not provided.
+        """
+        encrypted_bytes = encrypt_aes_gcm(data, key if key is not None else self.data_key)
         return await self._set_data(path, encrypted_bytes)
+
+    async def get_encrypted_user_data(self, path: str) -> bytes:
+        """
+        Get user-private encrypted data at a path relative to this user's namespace.
+
+        Reads from ``user/{member_id}/{path}`` and decrypts with self.user_data_key,
+        which is confidential against other space members and the server.
+
+        Args:
+            path: Relative data path (e.g., "notes", "settings/theme")
+
+        Returns:
+            Decrypted plaintext data bytes
+
+        Raises:
+            ValueError: If user_symmetric_key was not provided to the Space constructor
+            NotFoundError: If no data exists at this path
+            cryptography.exceptions.InvalidTag: If decryption fails
+        """
+        if self.user_data_key is None:
+            raise ValueError("user_symmetric_key is required for user-private encryption")
+        return await self.get_encrypted_data(f"user/{self.member_id}/{path}", key=self.user_data_key)
+
+    async def set_encrypted_user_data(self, path: str, data: bytes) -> int:
+        """
+        Store user-private encrypted data at a path relative to this user's namespace.
+
+        Encrypts with self.user_data_key (confidential against other space members and
+        the server) and stores at ``user/{member_id}/{path}``.
+
+        Args:
+            path: Relative data path (e.g., "notes", "settings/theme")
+            data: Plaintext data bytes to encrypt and store
+
+        Returns:
+            Timestamp when the data was signed (milliseconds)
+
+        Raises:
+            ValueError: If user_symmetric_key was not provided to the Space constructor
+        """
+        if self.user_data_key is None:
+            raise ValueError("user_symmetric_key is required for user-private encryption")
+        return await self.set_encrypted_data(f"user/{self.member_id}/{path}", data, key=self.user_data_key)
 
     async def _set_data(self, path: str, data: bytes) -> int:
         """Internal: set data value at path."""

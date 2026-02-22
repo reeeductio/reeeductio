@@ -26,6 +26,21 @@ async def space(fresh_keypair, symmetric_root, base_url):
         yield s
 
 
+@pytest_asyncio.fixture
+async def space_with_user_key(fresh_keypair, symmetric_root, user_symmetric_key, base_url):
+    """Create an AsyncSpace client with a user-private symmetric key."""
+    space_id = fresh_keypair.to_space_id()
+    async with AsyncSpace(
+        space_id=space_id,
+        member_id=fresh_keypair.to_user_id(),
+        private_key=fresh_keypair.private_key,
+        symmetric_root=symmetric_root,
+        user_symmetric_key=user_symmetric_key,
+        base_url=base_url,
+    ) as s:
+        yield s
+
+
 class TestAsyncAuthentication:
     async def test_authenticate_returns_token(self, space):
         token = await space.authenticate()
@@ -113,6 +128,15 @@ class TestAsyncEncryptedState:
         result = await space.get_encrypted_state(path)
         assert result == "async secret state"
 
+    async def test_custom_key_round_trips(self, space):
+        """set/get_encrypted_state with an explicit key should round-trip."""
+        from reeeductio.crypto import derive_key
+        custom_key = derive_key(os.urandom(32), "test-custom-state-key")
+        path = f"test/async-enc-state/{uuid.uuid4().hex[:8]}"
+        await space.set_encrypted_state(path, "async state with custom key", key=custom_key)
+        result = await space.get_encrypted_state(path, key=custom_key)
+        assert result == "async state with custom key"
+
 
 class TestAsyncStateHistory:
     async def test_state_history(self, space):
@@ -196,6 +220,16 @@ class TestAsyncEncryptedKVData:
         await space.set_encrypted_data(path, data)
         raw = await space.get_plaintext_data(path)
         assert raw != data
+
+    async def test_custom_key_round_trips(self, space):
+        """set/get_encrypted_data with an explicit key should round-trip."""
+        from reeeductio.crypto import derive_key
+        custom_key = derive_key(os.urandom(32), "test-custom-key")
+        path = f"test/async-enc-data/{uuid.uuid4().hex[:8]}"
+        data = b"async data with custom key"
+        await space.set_encrypted_data(path, data, key=custom_key)
+        result = await space.get_encrypted_data(path, key=custom_key)
+        assert result == data
 
 
 class TestAsyncCreateTool:
@@ -284,3 +318,42 @@ class TestAsyncCreateInvitation:
         )
         assert tool1["tool_id"] == keypair1.to_tool_id()
         assert tool2["tool_id"] == keypair2.to_tool_id()
+
+
+class TestAsyncUserPrivateKVData:
+    async def test_set_and_get_user_data(self, space_with_user_key):
+        """Round-trip through set/get_encrypted_user_data."""
+        path = f"notes/{uuid.uuid4().hex[:8]}"
+        data = b"async private user data"
+        ts = await space_with_user_key.set_encrypted_user_data(path, data)
+        assert ts > 0
+        result = await space_with_user_key.get_encrypted_user_data(path)
+        assert result == data
+
+    async def test_user_data_is_encrypted(self, space_with_user_key):
+        """Reading user-private data as plaintext should NOT match the original."""
+        path = f"notes/{uuid.uuid4().hex[:8]}"
+        data = b"async private user data"
+        await space_with_user_key.set_encrypted_user_data(path, data)
+        member_id = space_with_user_key.member_id
+        raw = await space_with_user_key.get_plaintext_data(f"user/{member_id}/{path}")
+        assert raw != data
+
+    async def test_user_data_stored_under_member_namespace(self, space_with_user_key):
+        """Data should be readable at the full namespaced path."""
+        path = f"notes/{uuid.uuid4().hex[:8]}"
+        data = b"async namespaced private data"
+        await space_with_user_key.set_encrypted_user_data(path, data)
+        member_id = space_with_user_key.member_id
+        result = await space_with_user_key.get_encrypted_data(
+            f"user/{member_id}/{path}",
+            key=space_with_user_key.user_data_key,
+        )
+        assert result == data
+
+    async def test_raises_without_user_key(self, space):
+        """Methods should raise ValueError when user_symmetric_key was not provided."""
+        with pytest.raises(ValueError, match="user_symmetric_key"):
+            await space.set_encrypted_user_data("notes/test", b"data")
+        with pytest.raises(ValueError, match="user_symmetric_key"):
+            await space.get_encrypted_user_data("notes/test")
