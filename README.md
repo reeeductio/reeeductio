@@ -33,6 +33,7 @@ All storage paths are governed by the same capability-based authorization system
 ### Spaces
 Spaces are the core data structure in rEEEductio, somewhat similar to the concept of a "room" in Matrix or a "group" in Signal.
 Everything happens in a Space, and each Space stands alone as its own self-contained thing.
+
 Each space has:
 - A unique Ed25519 public key as its identifier.  The "root" user who created the space holds the private key.
 - Zero or more non-root users, identified by their Ed25519 public keys
@@ -44,30 +45,33 @@ Each space has:
 
 Every space must be hosted on a server somewhere, but nothing in the space ties it to that particular server or to the server's domain name.
 
-In practice, a single app might connect to many different spaces simultaneously, on several different servers.
+In practice, a single app might connect to just a single space on a single server, or it might use many different spaces simultaneously, spread across several different domains.
 
 ### Topics
 Topics are message streams within a space.
 Each topic maintains:
 - A blockchain-style hash chain of messages (each message links to the previous via `prev_hash`)
 - Independent message sequences (across topics)
-- Linear ordering of messages within a topic is verified and enforced by the server
+
+Linear ordering of messages within a topic is verified and enforced by the server
 
 ### User Accounts
-Users are identified only by their public key
+Users in the space are identified only by their public key
 - Users connect to the space using only their public/private keys
-- No connection to email addresses, domain names, or phone numbers
-- Keys are unique per space. Having no long-term keys and no cross-space identities makes it very difficult to stalk or track a user across spaces.
-- Users can optionally set up a username and password in a space to enable secure recovery of their private key. This is strictly opt-in and requires action by both the space admin and the individual user.
+- Maximum privacy: No connection to email addresses, domain names, or phone numbers
+- Keys are unique per space. Having no long-term keys and no cross-space identities makes it very difficult for an adversary to stalk another user or track their activity across different spaces.
+- A user can optionally set up a username and password in a space to enable secure login using the [OPAQUE protocol](https://datatracker.ietf.org/doc/rfc9807/).  
+  Behind the scenes, this uses OPAQUE to recover the user's private key, then authenticates to the space as usual using the key.
+  Use of OPAQUE for username/password auth is strictly opt-in and requires action by both the space admin and the individual user.
 
 ### State
 The state for each space is a hierarchical, ordered key-value store
 - State is stored as events in the `state` topic for blockchain integrity.
-- State can hold:
-  - **Plaintext state**: Used by the space itself - User identities, roles, capabilities, tools, topic metadata (server can read for authorization)
+- State can consist of:
+  - **Plaintext state**: Used by the server for authentication and authorization - User identities, roles, capabilities, tools, topic metadata
   - **Encrypted state**: Used by the application - User preferences, private data (server stores as opaque blobs)
 - **All state entries must be signed**: Each entry includes the state path, signature, signed_by (user ID), and signed_at (timestamp)
-- Data is stored as base64. Interpretation is up to the application, and format is determined by the path of the state entry, ie the "key" in the key-value store.
+- Data is stored as base64. Interpretation of the data in a given state entry is up to the application, and format is determined by the path of the state entry, ie the "key" in the key-value store.
 
 
 ## Security
