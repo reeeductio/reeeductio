@@ -1,0 +1,40 @@
+name: Publish Python SDK
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'            # full release: triggers all publish workflows
+      - 'python-sdk/v[0-9]*' # SDK-only release
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # required for OIDC trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#python-sdk/}"
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set package version
+        working-directory: python-sdk
+        run: uvx hatch version ${{ env.VERSION }}
+
+      - name: Build
+        working-directory: python-sdk
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python-sdk/dist/
