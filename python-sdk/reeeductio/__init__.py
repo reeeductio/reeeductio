@@ -57,7 +57,11 @@ from .models import (
     RoleGrant,
 )
 
-__version__ = "0.1.1"
+try:
+    from importlib.metadata import version as _version
+    __version__ = _version("reeeductio")
+except Exception:
+    __version__ = "unknown"
 
 __all__ = [
     # Main clients
