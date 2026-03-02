@@ -1,6 +1,6 @@
 {
   "name": "reeeductio",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "TypeScript SDK for the Reeeductio Spaces API - end-to-end encrypted messaging with capability-based authorization",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
