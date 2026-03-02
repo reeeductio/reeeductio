@@ -17,15 +17,19 @@ Several components are provided, including:
 ## Features
 
 ### Secure Messaging
-
-Each space can contain multiple independent topics.
-The messages in each topic form a blockchain-style hash chain for tamper detection.
-Messages are end-to-end encrypted and signed client-side before being sent to the server, so the server only ever sees opaque ciphertext.
+Messages are end-to-end encrypted and signed client-side before being sent to the server, so the server sees nothing but ciphertext.
+Each space can contain multiple independent topics for messages.
+The messages in each topic form a blockchain-style hash chain for tamper resistance.
 
 ### Cloud Storage
-rEEEductio provides content-addressable blob storage where files are encrypted client-side, identified by the SHA-256 hash of their ciphertext.
-Spaces also include a hierarchical key-value state store, backed by the message hash chain for full audit history, and a more lightweight signed key-value data store for application data that doesn't need event-sourced history.
-All storage paths are governed by the same capability-based authorization system used for messaging, providing unified access control across the entire data layer.
+rEEEductio provides content-addressable blob storage where files are encrypted client-side.
+Encrypted blobs are identified by the SHA-256 hash of their ciphertext.
+
+Spaces also include a hierarchical key-value state store, backed by the message hash chain for full audit history.
+
+For data that does not require the same level of integrity protection as the space's state, a more lightweight signed key-value data store is also available.
+
+Read and write access to all storage paths are governed by the same capability-based authorization system used for messaging, providing unified access control across the entire data layer.
 
 
 ## Core Concepts
@@ -45,7 +49,7 @@ Each space has:
 
 Every space must be hosted on a server somewhere, but nothing in the space ties it to that particular server or to the server's domain name.
 
-In practice, a single app might connect to just a single space on a single server, or it might use many different spaces simultaneously, spread across several different domains.
+In practice, an app might connect to just a single space on a single server, or it might use many different spaces simultaneously, spread across several different domains.
 
 ### Topics
 Topics are message streams within a space.
