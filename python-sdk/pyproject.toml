@@ -12,14 +12,22 @@ dependencies = [
     "click>=8.0.0",
     "opaque-snake",
 ]
-authors = [{name = "Charles V Wright", email = "cvwright@fastmail.com"}]
-license = {file = ["LICENSE-APACHE", "LICENSE-MIT"]}
+authors = [{name = "Charles Wright"}]
+license = {text = "MIT OR Apache-2.0"}
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
     "License :: OSI Approved :: MIT License",
 ]
-keywords = ["spaces", "e2ee", "security", "privacy", "encryption"]
+keywords = [
+    "spaces", 
+    "e2ee", 
+    "security", 
+    "privacy", 
+    "encryption",
+    "messaging",
+    "storage"
+]
 
 [project.urls]
 Homepage = "https://github.com/cvwright/reeeductio/tree/main/python-sdk"
@@ -59,4 +67,11 @@ addopts = [
 ]
 markers = [
     "e2e: end-to-end tests requiring a running backend (docker-compose.e2e.yml)",
+]
+
+[dependency-groups]
+dev = [
+    "build>=1.4.0",
+    "hatch>=1.16.5",
+    "twine>=6.2.0",
 ]
