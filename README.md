@@ -5,7 +5,8 @@ rEEEductio is an end-to-end encrypted (EEE) data layer that makes it absurdly si
 It handles all the complexity of encryption, hashing, signing, verification, key derivation, authentication, and authorization.
 Developers are then free to focus on building the core features that make their apps unique.
 
-rEEEductio is available as open source, under a permissive license, so you can use it to build what you want.
+rEEEductio is available as open source, under your choice of permissive licenses, so you can use it to build what you want.
+
 Several components are provided, including:
 
 * An [OpenAPI spec](./openapi.yaml) for the protocol
@@ -64,9 +65,7 @@ Users in the space are identified only by their public key
 - Users connect to the space using only their public/private keys
 - Maximum privacy: No connection to email addresses, domain names, or phone numbers
 - Keys are unique per space. Having no long-term keys and no cross-space identities makes it very difficult for an adversary to stalk another user or track their activity across different spaces.
-- A user can optionally set up a username and password in a space to enable secure login using the [OPAQUE protocol](https://datatracker.ietf.org/doc/rfc9807/).  
-  Behind the scenes, this uses OPAQUE to recover the user's private key, then authenticates to the space as usual using the key.
-  Use of OPAQUE for username/password auth is strictly opt-in and requires action by both the space admin and the individual user.
+- A user can optionally set up a username and password in a space to enable secure login using the [OPAQUE protocol](https://datatracker.ietf.org/doc/rfc9807/). Behind the scenes, this uses OPAQUE to recover the user's private key, then authenticates to the space as usual using the key. Use of OPAQUE for username/password auth is strictly opt-in and requires action by both the space admin and the individual user.
 
 ### State
 The state for each space is a hierarchical, ordered key-value store
