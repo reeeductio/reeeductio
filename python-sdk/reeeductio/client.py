@@ -644,6 +644,60 @@ class Space:
             sender_private_key=self.private_key,
         )
 
+    def derive_topic_key(self, topic_id: str) -> bytes:
+        """
+        Derive the encryption key for a topic.
+
+        Args:
+            topic_id: Topic identifier
+
+        Returns:
+            32-byte AES-256 topic key
+        """
+        return derive_key(self.message_key, f"topic key | {topic_id}")
+
+    def post_encrypted_message(
+        self,
+        topic_id: str,
+        msg_type: str,
+        data: bytes,
+        prev_hash: str | None = None,
+    ) -> MessageCreated:
+        """
+        Encrypt and post a message to a topic.
+
+        Encrypts the plaintext with the derived key for the given topic,
+        then posts the ciphertext.
+
+        Args:
+            topic_id: Topic identifier
+            msg_type: Message type/category
+            data: Plaintext message data to encrypt
+            prev_hash: Hash of previous message (optional, fetched if not provided)
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+        """
+        topic_key = self.derive_topic_key(topic_id)
+        encrypted = encrypt_aes_gcm(data, topic_key)
+        return self.post_message(topic_id, msg_type, encrypted, prev_hash)
+
+    def decrypt_message_data(self, msg: Message, topic_id: str) -> bytes:
+        """
+        Decrypt the data payload of an encrypted message.
+
+        Derives the topic key and decrypts the message's base64-encoded data.
+
+        Args:
+            msg: Message with encrypted data payload
+            topic_id: Topic identifier used to derive the decryption key
+
+        Returns:
+            Decrypted plaintext bytes
+        """
+        topic_key = self.derive_topic_key(topic_id)
+        return messages.decrypt_message_data(msg, topic_key)
+
     # ============================================================
     # Blob Management
     # ============================================================
@@ -2267,6 +2321,60 @@ class AsyncSpace:
             sender_public_key_typed=self.member_id,
             sender_private_key=self.private_key,
         )
+
+    def derive_topic_key(self, topic_id: str) -> bytes:
+        """
+        Derive the encryption key for a topic.
+
+        Args:
+            topic_id: Topic identifier
+
+        Returns:
+            32-byte AES-256 topic key
+        """
+        return derive_key(self.message_key, f"topic key | {topic_id}")
+
+    async def post_encrypted_message(
+        self,
+        topic_id: str,
+        msg_type: str,
+        data: bytes,
+        prev_hash: str | None = None,
+    ) -> MessageCreated:
+        """
+        Encrypt and post a message to a topic.
+
+        Encrypts the plaintext with the derived key for the given topic,
+        then posts the ciphertext.
+
+        Args:
+            topic_id: Topic identifier
+            msg_type: Message type/category
+            data: Plaintext message data to encrypt
+            prev_hash: Hash of previous message (optional, fetched if not provided)
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+        """
+        topic_key = self.derive_topic_key(topic_id)
+        encrypted = encrypt_aes_gcm(data, topic_key)
+        return await self.post_message(topic_id, msg_type, encrypted, prev_hash)
+
+    def decrypt_message_data(self, msg: Message, topic_id: str) -> bytes:
+        """
+        Decrypt the data payload of an encrypted message.
+
+        Derives the topic key and decrypts the message's base64-encoded data.
+
+        Args:
+            msg: Message with encrypted data payload
+            topic_id: Topic identifier used to derive the decryption key
+
+        Returns:
+            Decrypted plaintext bytes
+        """
+        topic_key = self.derive_topic_key(topic_id)
+        return messages.decrypt_message_data(msg, topic_key)
 
     # ============================================================
     # Async State Operations

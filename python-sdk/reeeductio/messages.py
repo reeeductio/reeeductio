@@ -6,11 +6,14 @@ Provides utilities for message encryption, chain validation, and posting.
 
 from __future__ import annotations
 
+import base64
+
 import httpx
 
 from .crypto import (
     compute_hash,
     decode_urlsafe_base64,
+    decrypt_aes_gcm,
     encode_base64,
     sign_data,
     to_message_id,
@@ -365,6 +368,30 @@ def validate_message_chain_with_anchor(
         prev_hash = msg.message_hash
 
     return True
+
+
+def decrypt_message_data(msg: Message, key: bytes) -> bytes:
+    """
+    Decrypt the data payload of an encrypted message.
+
+    Decodes the base64 message data and decrypts it using AES-GCM-256
+    with the provided topic key.
+
+    Args:
+        msg: Message whose data field contains base64-encoded ciphertext
+        key: 32-byte AES-256 topic key (derived via derive_topic_key)
+
+    Returns:
+        Decrypted plaintext bytes
+
+    Raises:
+        ValueError: If message has no data
+        cryptography.exceptions.InvalidTag: If decryption fails (wrong key or corrupted data)
+    """
+    if not msg.data:
+        raise ValueError(f"Message {msg.message_hash} has no data to decrypt")
+    encrypted_bytes = base64.b64decode(msg.data)
+    return decrypt_aes_gcm(encrypted_bytes, key)
 
 
 class MessageEncryption:
