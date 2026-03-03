@@ -15,6 +15,14 @@
 15. Add developer docs with hints on how to build a chat app or a forum etc
 16. Add developer docs for setting up the backend server
 17. ~~Submit opaque_snake and python-sdk to pypi~~
-18. Submit typescript-sdk to npm
-19. Submit backend container image to docker.com
+18. ~~Submit typescript-sdk to npm~~
+19. ~~Submit backend container image to GHCR~~
 20. Add user symmetric key to client SDKs
+21. Refactor WebSocket design
+    - Add `subscribe` and `unsubscribe` commands
+    - Only send messages on topics to which the client is subscribed
+    - Automatically subscribe every client to `state` topic, but allow `unsubscribe`
+22. Add Markdown doc on invitations
+    - QR code
+    - Join tool
+    - OPAQUE
