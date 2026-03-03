@@ -1,6 +1,6 @@
 [project]
 name = "reeeductio"
-version = "0.1.0"
+dynamic = ["version"]
 description = "End-to-end encrypted PubSub messaging system with capability-based authorization"
 requires-python = ">=3.10"
 dependencies = [
@@ -25,6 +25,13 @@ dev = [
     "httpx>=0.25.0",  # For WebSocket testing with TestClient
     "testcontainers[google,minio]>=4.0.0",  # For Firestore and MinIO emulators in tests
 ]
+
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+tag_regex = "^(?:backend/)?v(?P<version>.*)$"
 
 [tool.setuptools]
 py-modules = [

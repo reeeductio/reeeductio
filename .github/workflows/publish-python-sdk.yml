@@ -15,20 +15,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Extract version from tag
-        run: |
-          TAG="${{ github.ref_name }}"
-          VERSION="${TAG#python-sdk/}"
-          VERSION="${VERSION#v}"
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+        with:
+          fetch-depth: 0  # hatch-vcs needs full history to determine version from tags
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-
-      - name: Set package version
-        working-directory: python-sdk
-        run: uvx hatch version "${VERSION}"
 
       - name: Build
         working-directory: python-sdk

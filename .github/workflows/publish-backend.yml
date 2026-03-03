@@ -19,12 +19,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # setuptools-scm needs full history to determine version from tags
 
-      - name: Extract version from tag
+      - name: Compute image tags
+        id: meta
         run: |
           TAG="${{ github.ref_name }}"
-          VERSION="${TAG#v}"
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          VERSION="${TAG#backend/}"
+          VERSION="${VERSION#v}"
+          MAJOR="${VERSION%%.*}"
+          MINOR="${VERSION#*.}"; MINOR="${MINOR%%.*}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          printf 'tags<<EOF\n%s\n%s\n%s\nEOF\n' \
+            "${IMAGE}:${VERSION}" \
+            "${IMAGE}:${MAJOR}.${MINOR}" \
+            "${IMAGE}:${MAJOR}" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -33,20 +44,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: backend
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
