@@ -1,107 +1,107 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
-         <loc>https://reeeductio.github.io/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/DOCS_PLAN/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/DOCS_PLAN/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/TODO/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/TODO/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/concepts/access-control/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/concepts/access-control/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/concepts/blobs/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/concepts/blobs/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/concepts/spaces/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/concepts/spaces/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/concepts/state-and-data/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/concepts/state-and-data/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/concepts/topics-and-messages/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/concepts/topics-and-messages/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/getting-started/quickstart-python/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/getting-started/quickstart-python/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/getting-started/quickstart-typescript/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/getting-started/quickstart-typescript/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/getting-started/running-the-server/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/getting-started/running-the-server/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/how-to/add-users/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/how-to/add-users/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/how-to/create-a-space/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/how-to/create-a-space/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/how-to/manage-permissions/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/how-to/manage-permissions/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/how-to/password-login/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/how-to/password-login/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/how-to/self-hosting/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/how-to/self-hosting/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/how-to/send-messages/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/how-to/send-messages/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/how-to/store-files/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/how-to/store-files/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/how-to/tool-accounts/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/how-to/tool-accounts/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/reference/api/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/reference/api/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/reference/python-sdk/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/reference/python-sdk/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/reference/server-config/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/reference/server-config/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/reference/typescript-sdk/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/reference/typescript-sdk/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/security/internals/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/security/internals/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/security/overview/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/security/overview/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
     <url>
-         <loc>https://reeeductio.github.io/security/threat-model/</loc>
+         <loc>https://reeeductio.github.io/reeeductio/security/threat-model/</loc>
          <lastmod>2026-03-08</lastmod>
     </url>
 </urlset>
