@@ -4,7 +4,7 @@
 
 rEEEductio is an end-to-end encrypted data layer for building apps with secure messaging, encrypted file storage, and auditable shared state — without writing any cryptography yourself.
 
-**→ [Documentation](https://reeeductio.github.io/)**
+**→ [Documentation](https://reeeductio.github.io/reeeductio/)**
 
 ## What it is
 
@@ -53,16 +53,16 @@ for msg in space.get_messages('general'):
     print(space.decrypt_message_data(msg, 'general'))
 ```
 
-See the [Python Quick Start](https://reeeductio.github.io/getting-started/quickstart-python/) and [TypeScript Quick Start](https://reeeductio.github.io/getting-started/quickstart-typescript/) for full walkthroughs.
+See the [Python Quick Start](https://reeeductio.github.io/reeeductio/getting-started/quickstart-python/) and [TypeScript Quick Start](https://reeeductio.github.io/reeeductio/getting-started/quickstart-typescript/) for full walkthroughs.
 
 ## Security model
 
 - The server stores only ciphertext — it cannot read messages, state, or blobs.
 - Every message is signed by its sender and linked to the previous message by hash, forming a tamper-evident chain.
 - Access control uses a capability system stored in the space's own state and verified by the server.
-- Password-based key recovery is available via [OPAQUE](https://reeeductio.github.io/how-to/password-login/), an asymmetric PAKE — the password is never sent to the server.
+- Password-based key recovery is available via [OPAQUE](https://reeeductio.github.io/reeeductio/how-to/password-login/), an asymmetric PAKE — the password is never sent to the server.
 
-See [Security Internals](https://reeeductio.github.io/security/internals/) for the full cryptographic design.
+See [Security Internals](https://reeeductio.github.io/reeeductio/security/internals/) for the full cryptographic design.
 
 ## Running the server
 
@@ -70,7 +70,7 @@ See [Security Internals](https://reeeductio.github.io/security/internals/) for t
 docker run -p 8000:8000 ghcr.io/reeeductio/reeeductio-backend:latest
 ```
 
-See [Running the Server](https://reeeductio.github.io/getting-started/running-the-server/) and [Self-Hosting](https://reeeductio.github.io/how-to/self-hosting/) for production setup.
+See [Running the Server](https://reeeductio.github.io/reeeductio/getting-started/running-the-server/) and [Self-Hosting](https://reeeductio.github.io/reeeductio/how-to/self-hosting/) for production setup.
 
 ## License
 
