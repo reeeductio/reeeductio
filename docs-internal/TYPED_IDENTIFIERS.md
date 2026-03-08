@@ -17,7 +17,7 @@ This E2E encrypted pubsub system now uses **typed identifiers** with a 264-bit f
 
 | Type    | First Char | 6-bit Value | Binary   | Purpose                    |
 |---------|-----------|-------------|----------|----------------------------|
-| Space | `C`       | 2           | 000010   | Ed25519 space public key |
+| Space | `S`       | 18          | 010010   | Ed25519 space public key |
 | User    | `U`       | 20          | 010100   | Ed25519 user public key    |
 | Tool    | `T`       | 19          | 010011   | Ed25519 tool public key    |
 | Message | `M`       | 12          | 001100   | SHA256 message hash        |

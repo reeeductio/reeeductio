@@ -41,7 +41,7 @@ All identifiers use a typed base64 encoding with a header byte:
 
 Types:
 - `U` - User (Ed25519 public key)
-- `C` - Space (Ed25519 public key) - C for "Channel"
+- `S` - Space (Ed25519 public key)
 - `T` - Tool (Ed25519 public key)
 - `M` - Message (SHA256 hash)
 - `B` - Blob (SHA256 hash)
