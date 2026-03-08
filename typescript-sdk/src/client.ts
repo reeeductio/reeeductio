@@ -565,6 +565,21 @@ export class Space {
     return this.postMessage(topicId, msgType, encrypted, prevHash);
   }
 
+  /**
+   * Decrypt the data payload of an encrypted message.
+   *
+   * Derives the topic key and decrypts the message's base64-encoded data field.
+   *
+   * @param msg - Message with encrypted data payload
+   * @param topicId - Topic identifier used to derive the decryption key
+   * @returns Decrypted plaintext bytes
+   */
+  decryptMessageData(msg: Message, topicId: string): Uint8Array {
+    const topicKey = this.deriveTopicKey(topicId);
+    const encryptedBytes = decodeBase64(msg.data);
+    return decryptAesGcm(encryptedBytes, topicKey);
+  }
+
   // ============================================================
   // Blob Management
   // ============================================================
