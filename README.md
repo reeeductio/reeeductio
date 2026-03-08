@@ -1,104 +1,77 @@
-# rEEEductio: Absurdly simple encrypted spaces
+# rEEEductio
 
-rEEEductio is an end-to-end encrypted (EEE) data layer that makes it absurdly simple to build apps with secure messaging and encrypted cloud storage.
+**Absurdly simple encrypted spaces for developers.**
 
-It handles all the complexity of encryption, hashing, signing, verification, key derivation, authentication, and authorization.
-Developers are then free to focus on building the core features that make their apps unique.
+rEEEductio is an end-to-end encrypted data layer for building apps with secure messaging, encrypted file storage, and auditable shared state — without writing any cryptography yourself.
 
-rEEEductio is available as open source, under your choice of permissive licenses, so you can use it to build what you want.
+**→ [Documentation](https://reeeductio.github.io/)**
 
-Several components are provided, including:
+## What it is
 
-* An [OpenAPI spec](./openapi.yaml) for the protocol
-* A Python [backend](./backend/) built on [FastAPI](https://fastapi.tiangolo.com/)
-* A Python [client SDK](./new-python-sdk/) built on [httpx](https://www.python-httpx.org/)
-* A set of [command-line tools](./new-python-sdk/reeeductio/cli/) built on the Python SDK
-* A TypeScript [client SDK](./typescript-sdk/) that works both in the browser and in Node
+A rEEEductio **space** is a shared, encrypted container that holds:
 
-## Features
+- **Topics** — append-only message streams, hash-chained and signed
+- **State** — a hierarchical key-value store backed by the same hash chain, with full audit history
+- **Blobs** — content-addressed encrypted file storage
+- **Data** — a lightweight signed key-value store for less critical data
 
-### Secure Messaging
-Messages are end-to-end encrypted and signed client-side before being sent to the server, so the server sees nothing but ciphertext.
-Each space can contain multiple independent topics for messages.
-The messages in each topic form a blockchain-style hash chain for tamper resistance.
+All encryption, signing, hashing, key derivation, authentication, and authorization is handled by the SDK. Developers focus on their application logic.
 
-### Cloud Storage
-rEEEductio provides content-addressable blob storage where files are encrypted client-side.
-Encrypted blobs are identified by the SHA-256 hash of their ciphertext.
+## Components
 
-Spaces also include a hierarchical key-value state store, backed by the message hash chain for full audit history.
+| Component | Description |
+|-----------|-------------|
+| [backend/](backend/) | Python server built on [FastAPI](https://fastapi.tiangolo.com/). Supports SQLite and Firestore. |
+| [python-sdk/](python-sdk/) | Python client SDK and `reeeductio-admin` CLI |
+| [typescript-sdk/](typescript-sdk/) | TypeScript SDK for Node.js and browsers |
 
-For data that does not require the same level of integrity protection as the space's state, a more lightweight signed key-value data store is also available.
+## Quick start
 
-Read and write access to all storage paths are governed by the same capability-based authorization system used for messaging, providing unified access control across the entire data layer.
+```python
+from reeeductio import Space
+from reeeductio.crypto import generate_keypair, to_user_id, to_space_id
+import secrets
 
+# Generate credentials (do this once, save the results)
+private_key, public_key = generate_keypair()
+space_id = to_space_id(public_key)
+symmetric_root = secrets.token_bytes(32)
 
-## Core Concepts
+# Connect
+space = Space(
+    space_id=space_id,
+    member_id=to_user_id(public_key),
+    private_key=private_key,
+    symmetric_root=symmetric_root,
+)
 
-### Spaces
-Spaces are the core data structure in rEEEductio, somewhat similar to the concept of a "room" in Matrix or a "group" in Signal.
-Everything happens in a Space, and each Space stands alone as its own self-contained thing.
+# Post an encrypted message
+space.post_encrypted_message('general', 'chat.text', b'Hello, world!')
 
-Each space has:
-- A unique Ed25519 public key as its identifier.  The "root" user who created the space holds the private key.
-- Zero or more non-root users, identified by their Ed25519 public keys
-- A shared symmetric key for deriving encryption keys, known only to the users and not to the server
-- Multiple independent *topics* for sending messages.  Messages within a topic are cryptographically linked together in a block chain for integrity verification.
-- State, represented as a hierarchical key-value store and stored as messages in the special "state" topic for integrity
-- Efficient key-value storage with cryptographic signatures
-- Content-addressable object ("blob") storage for files and other large data.  Blobs are identified by the SHA-256 hash of their content.
+# Read it back
+for msg in space.get_messages('general'):
+    print(space.decrypt_message_data(msg, 'general'))
+```
 
-Every space must be hosted on a server somewhere, but nothing in the space ties it to that particular server or to the server's domain name.
+See the [Python Quick Start](https://reeeductio.github.io/getting-started/quickstart-python/) and [TypeScript Quick Start](https://reeeductio.github.io/getting-started/quickstart-typescript/) for full walkthroughs.
 
-In practice, an app might connect to just a single space on a single server, or it might use many different spaces simultaneously, spread across several different domains.
+## Security model
 
-### Topics
-Topics are message streams within a space.
-Each topic maintains:
-- A blockchain-style hash chain of messages (each message links to the previous via `prev_hash`)
-- Independent message sequences (across topics)
+- The server stores only ciphertext — it cannot read messages, state, or blobs.
+- Every message is signed by its sender and linked to the previous message by hash, forming a tamper-evident chain.
+- Access control uses a capability system stored in the space's own state and verified by the server.
+- Password-based key recovery is available via [OPAQUE](https://reeeductio.github.io/how-to/password-login/), an asymmetric PAKE — the password is never sent to the server.
 
-Linear ordering of messages within a topic is verified and enforced by the server
+See [Security Internals](https://reeeductio.github.io/security/internals/) for the full cryptographic design.
 
-### User Accounts
-Users in the space are identified only by their public key
-- Users connect to the space using only their public/private keys
-- Maximum privacy: No connection to email addresses, domain names, or phone numbers
-- Keys are unique per space. Having no long-term keys and no cross-space identities makes it very difficult for an adversary to stalk another user or track their activity across different spaces.
-- A user can optionally set up a username and password in a space to enable secure login using the [OPAQUE protocol](https://datatracker.ietf.org/doc/rfc9807/). Behind the scenes, this uses OPAQUE to recover the user's private key, then authenticates to the space as usual using the key. Use of OPAQUE for username/password auth is strictly opt-in and requires action by both the space admin and the individual user.
+## Running the server
 
-### State
-The state for each space is a hierarchical, ordered key-value store
-- State is stored as events in the `state` topic for blockchain integrity.
-- State can consist of:
-  - **Plaintext state**: Used by the server for authentication and authorization - User identities, roles, capabilities, tools, topic metadata
-  - **Encrypted state**: Used by the application - User preferences, private data (server stores as opaque blobs)
-- **All state entries must be signed**: Each entry includes the state path, signature, signed_by (user ID), and signed_at (timestamp)
-- Data is stored as base64. Interpretation of the data in a given state entry is up to the application, and format is determined by the path of the state entry, ie the "key" in the key-value store.
+```bash
+docker run -p 8000:8000 ghcr.io/reeeductio/reeeductio-backend:latest
+```
 
+See [Running the Server](https://reeeductio.github.io/getting-started/running-the-server/) and [Self-Hosting](https://reeeductio.github.io/how-to/self-hosting/) for production setup.
 
-## Security
+## License
 
-### Encryption
-Message content, blob data, and application state can be encrypted client-side using AES-GCM before leaving the device.
-The server operates in a true zero-knowledge mode — it stores and relays only opaque ciphertext and never has access to plaintext or key material.
-Each space derives its encryption keys from a single shared symmetric root using HKDF-SHA256, with domain-separated info strings.
-This provides cryptographic isolation between messages, blobs, state, and key-value data without requiring users to manage multiple keys per space.
-
-### Integrity
-Every message is individually signed with the sender's Ed25519 key and includes a SHA-256 hash computed over its space id, topic id, message type, payload, sender, and the hash of the preceding message.
-This creates a per-topic hash chain that makes tampering, reordering, or deletion of messages detectable by any participant.
-State entries are similarly signed and timestamped, and blobs are content-addressed by the SHA-256 hash of their ciphertext, ensuring integrity at rest.
-
-### Authentication
-Users authenticate via Ed25519 challenge-response: the server issues a random nonce, and the client signs it with its private key to prove possession without ever transmitting the key.
-Successful authentication yields a short-lived JWT for subsequent API calls. 
-For optional key recovery, rEEEductio implements the OPAQUE asymmetric PAKE protocol, which allows users to set up a username and password without the server ever learning the password or being able to derive the user's private key from it.
-
-### Authorization
-Access control is built on a capability-based system where each capability is a signed grant specifying a subject, an operation (read, create, modify, delete, or the compound write), and a path pattern with wildcards (`{self}`, `{any}`, `{...}`).
-Capabilities form a chain of trust rooted at the space creator, and the server validates each chain before permitting an action.
-Role-based access control is layered on top, with roles mapping to sets of capabilities for convenient administration.
-Tool accounts (limited-use API keys) receive only explicitly granted capabilities with no ambient authority, enabling use cases like invite links and bots with tightly scoped permissions.
-
-
+Available under your choice of permissive open-source licenses.
