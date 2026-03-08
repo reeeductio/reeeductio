@@ -59,8 +59,7 @@ Added discriminated union for database backends:
 ```python
 class SqliteDatabaseConfig(BaseModel):
     type: Literal["sqlite"] = "sqlite"
-    state_db_path: str
-    message_db_path: str
+    # Per-space databases are created automatically under spaces/
 
 class FirestoreDatabaseConfig(BaseModel):
     type: Literal["firestore"] = "firestore"
@@ -94,8 +93,6 @@ Added to [pyproject.toml](../pyproject.toml):
 ```yaml
 database:
   type: sqlite
-  state_db_path: state.db
-  message_db_path: messages.db
 ```
 **When to use:** Single-instance deployments, development, testing
 

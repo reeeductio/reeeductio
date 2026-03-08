@@ -76,14 +76,6 @@ BlobStoreConfig = Annotated[
 class SqliteDatabaseConfig(BaseModel):
     """SQLite database configuration"""
     type: Literal["sqlite"] = "sqlite"
-    state_db_path: str = Field(
-        default="state.db",
-        description="SQLite database path for state storage"
-    )
-    message_db_path: str = Field(
-        default="messages.db",
-        description="SQLite database path for message storage"
-    )
 
 
 class FirestoreDatabaseConfig(BaseModel):

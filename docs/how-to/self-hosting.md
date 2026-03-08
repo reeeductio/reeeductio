@@ -34,8 +34,7 @@ server:
   challenge_expiry_seconds: 300
 
 database:
-  state_db_path: /data/state.db
-  message_db_path: /data/messages.db
+  type: sqlite
 
 blob_store:
   type: s3
