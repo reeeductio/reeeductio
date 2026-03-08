@@ -1,0 +1,82 @@
+site_name: rEEEductio
+site_description: Absurdly simple encrypted spaces for developers
+site_url: https://reeeductio.github.io/
+repo_url: https://github.com/reeeductio/reeeductio
+repo_name: reeeductio/reeeductio
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Running the Server: getting-started/running-the-server.md
+    - Python Quick Start: getting-started/quickstart-python.md
+    - TypeScript Quick Start: getting-started/quickstart-typescript.md
+  - Concepts:
+    - Spaces: concepts/spaces.md
+    - Topics & Messages: concepts/topics-and-messages.md
+    - State & Data: concepts/state-and-data.md
+    - Blobs: concepts/blobs.md
+    - Access Control: concepts/access-control.md
+  - How-To Guides:
+    - Create a Space: how-to/create-a-space.md
+    - Add Users: how-to/add-users.md
+    - Send Messages: how-to/send-messages.md
+    - Store Files: how-to/store-files.md
+    - Manage Permissions: how-to/manage-permissions.md
+    - Password Login (OPAQUE): how-to/password-login.md
+    - Tool Accounts: how-to/tool-accounts.md
+    - Self-Hosting: how-to/self-hosting.md
+  - Reference:
+    - Python SDK: reference/python-sdk.md
+    - TypeScript SDK: reference/typescript-sdk.md
+    - REST API: reference/api.md
+    - Server Configuration: reference/server-config.md
+  - Security:
+    - Overview: security/overview.md
+    - Threat Model: security/threat-model.md
+    - Internals: security/internals.md

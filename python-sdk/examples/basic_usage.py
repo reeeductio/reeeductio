@@ -20,7 +20,7 @@ print(f"Generated user ID: {user_id}")
 
 # In practice, you'd have a space_id from creating or joining a space
 # For this example, we'll use a placeholder
-SPACE_ID = "Cabc123def456ghi789jkl012mno345pqr678stu901vwx234yz"
+SPACE_ID = "Sabc123def456ghi789jkl012mno345pqr678stu901vwx234yz"
 BASE_URL = "http://localhost:8000"
 
 # Generate the symmetric root key (32 bytes)

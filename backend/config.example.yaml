@@ -14,11 +14,14 @@ server:
 
 # Database configuration
 database:
-  # Path to SQLite database for state storage
-  state_db_path: /data/state.db
+  type: sqlite
+  # SQLite databases are created automatically per space under the spaces/ directory.
+  # No path configuration is needed.
 
-  # Path to SQLite database for message storage
-  message_db_path: /data/messages.db
+  # For Firestore:
+  # type: firestore
+  # project_id: my-gcp-project
+  # database_id: (default)
 
 # Blob storage configuration
 # Choose one of: filesystem, s3, or sqlite

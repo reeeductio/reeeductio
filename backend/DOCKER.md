@@ -35,20 +35,18 @@ docker run -d \
 
 The container uses volume mounts to persist data:
 
-- **SQLite Databases**: `./data/*.db`
-  - `state.db` - Space and user state
-  - `messages.db` - Message storage
+- **SQLite Databases**: `./data/spaces/` (one subdirectory per space, created automatically)
 - **Blob Storage**: `./data/blobs/` (when using filesystem storage)
 
 ### Volume Configuration
 
-The container uses two volume mount points:
-
 ```
 data/                 # Persistent data volume
-├── state.db          # State database
-├── messages.db       # Message database
-└── blobs/           # Blob storage (if using filesystem)
+├── spaces/           # Per-space SQLite databases (created automatically)
+│   └── S.../
+│       ├── data.db
+│       └── messages.db
+└── blobs/            # Blob storage (if using filesystem)
     └── ...
 
 config/               # Configuration volume
@@ -75,8 +73,7 @@ server:
   challenge_expiry_seconds: 300
 
 database:
-  state_db_path: /data/state.db
-  message_db_path: /data/messages.db
+  type: sqlite
 
 blob_store:
   type: filesystem
@@ -94,8 +91,7 @@ server:
   port: 8000
 
 database:
-  state_db_path: /data/state.db
-  message_db_path: /data/messages.db
+  type: sqlite
 
 blob_store:
   type: s3
@@ -116,8 +112,7 @@ server:
   port: 8000
 
 database:
-  state_db_path: /data/state.db
-  message_db_path: /data/messages.db
+  type: sqlite
 
 blob_store:
   type: sqlite
@@ -137,8 +132,8 @@ environment: production
 - `server.challenge_expiry_seconds` - Auth challenge expiry in seconds (default: `300`)
 
 #### Database Settings
-- `database.state_db_path` - Path to state database (default: `state.db`)
-- `database.message_db_path` - Path to message database (default: `messages.db`)
+- `database.type` - Database backend: `sqlite` (default) or `firestore`
+- SQLite databases are created automatically per space; no path configuration needed.
 
 #### Blob Storage Settings
 
@@ -167,7 +162,7 @@ environment: production
 
 You can override any configuration value using environment variables with the prefix pattern:
 - `SERVER__HOST` - Override `server.host`
-- `DB__STATE_DB_PATH` - Override `database.state_db_path`
+- `DATABASE__TYPE` - Override `database.type`
 - `BLOB_STORE__TYPE` - Override `blob_store.type`
 
 Environment variables take precedence over the configuration file.
@@ -229,8 +224,7 @@ server:
   port: 8000
 
 database:
-  state_db_path: /data/state.db
-  message_db_path: /data/messages.db
+  type: sqlite
 
 blob_store:
   type: filesystem

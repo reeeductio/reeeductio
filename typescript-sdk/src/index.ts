@@ -12,7 +12,7 @@
  *
  * // Create a Space client
  * const space = new Space({
- *   spaceId: 'C...',
+ *   spaceId: 'S...',
  *   keyPair,
  *   symmetricRoot: new Uint8Array(32), // Your 32-byte symmetric key
  *   baseUrl: 'https://api.example.com',

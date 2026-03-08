@@ -151,7 +151,7 @@ class SpaceManager:
                 storage_path = Path(storage_dir)
                 storage_path.mkdir(parents=True, exist_ok=True)
 
-                data_store = SqliteDataStore(str(storage_path / "state.db"))
+                data_store = SqliteDataStore(str(storage_path / "data.db"))
                 message_store = SqliteMessageStore(str(storage_path / "messages.db"))
 
             # Create space instance - use AdminSpace for admin space
