@@ -32,16 +32,44 @@ Every space has two complementary keys:
 
 **Symmetric root** — a 32-byte random secret shared among the space's members. The SDK uses it with HKDF to derive separate encryption keys for messages, state, and blobs, without any single key doing double-duty.
 
-```
-symmetricRoot
-├── message_key  (HKDF "message key | {spaceId}")
-│   ├── topic_key["general"]  (HKDF "topic key | general")
-│   ├── topic_key["alerts"]   (HKDF "topic key | alerts")
-│   └── state_key             (HKDF "topic key | state")
-└── data_key     (HKDF "data key | {spaceId}")
+```mermaid
+graph TD
+    SR["Symmetric Root (32 random bytes)"]
+    SR -->|HKDF| MK["message_key (per space)"]
+    SR -->|HKDF| DK["data_key (per space)"]
+    MK -->|HKDF| TK1["topic_key['general']"]
+    MK -->|HKDF| TK2["topic_key['alerts']"]
+    MK -->|HKDF| SK["state_key (reserved topic 'state')"]
+    TK1 -->|AES-GCM| E1[Encrypted messages in 'general']
+    TK2 -->|AES-GCM| E2[Encrypted messages in 'alerts']
+    SK  -->|AES-GCM| E3[Encrypted state entries]
+    DK  -->|AES-GCM| E4[Encrypted data entries]
 ```
 
-Neither key alone is enough. You need both to read and write data in a space.
+Each topic has its own key, derived fresh each time from `message_key`. Sharing a topic key with someone does not expose any other topic's data.
+
+Neither the key pair nor the symmetric root alone is enough. You need both to read and write data in a space.
+
+## Authentication flow
+
+Every API request is authenticated with a short-lived JWT token. The token is obtained through a challenge-response exchange using your Ed25519 private key — no passwords involved.
+
+```mermaid
+sequenceDiagram
+    participant C as Client (SDK)
+    participant S as Server
+
+    C->>S: POST /spaces/{spaceId}/auth/challenge {public_key: "U..."}
+    S-->>C: {challenge: "<random string>", expires_at: ...}
+    C->>C: signature = Ed25519.sign(challenge, privateKey)
+    C->>S: POST /spaces/{spaceId}/auth/verify {public_key, challenge, signature}
+    S->>S: Verify signature against public key
+    S-->>C: {token: "<JWT>", expires_at: ...}
+    C->>S: GET /spaces/{spaceId}/topics/general/messages Authorization: Bearer <JWT>
+    S-->>C: [{message_hash, data, ...}, ...]
+```
+
+The SDK handles this automatically — you never need to call the auth endpoints directly.
 
 ## Space and user IDs
 

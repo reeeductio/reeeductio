@@ -42,7 +42,7 @@ admin:
 !!! warning "Development only"
     `auto_create_spaces: true` lets anyone create a space on your server without
     authentication. This is fine for local development but should never be used in
-    production. See [Self-Hosting](self-hosting.md) for a production configuration.
+    production. See [Self-Hosting](../how-to/self-hosting.md) for a production configuration.
 
 ## 3. Create a Compose file
 
