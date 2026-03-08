@@ -4,9 +4,9 @@ See [DOCS_PLAN.md](DOCS_PLAN.md) for the full analysis and rationale.
 
 ## Infrastructure
 
-- [ ] Set up MkDocs + Material theme (`pip install mkdocs-material`, create `mkdocs.yml`)
+- [x] Set up MkDocs + Material theme (`pip install mkdocs-material`, create `mkdocs.yml`)
 - [ ] Configure Read the Docs (or GitHub Pages) for auto-deploy
-- [ ] Add Mermaid diagram support to `mkdocs.yml`
+- [x] Add Mermaid diagram support to `mkdocs.yml`
 
 ## Diagrams (Mermaid)
 
@@ -20,16 +20,19 @@ See [DOCS_PLAN.md](DOCS_PLAN.md) for the full analysis and rationale.
 
 ## Home / Introduction
 
-- [ ] Rewrite `docs/index.md` — plain-language pitch, no crypto jargon upfront
-- [ ] "Why rEEEductio?" — positioning vs. Firebase/Supabase, Signal/Matrix
-- [ ] Feature summary in developer terms
-- [ ] Quick links to Python and TypeScript quick starts
+- [x] `docs/index.md` — plain-language pitch, comparison table, quick links (first draft done)
+- [ ] Flesh out "Why rEEEductio?" — positioning vs. Firebase/Supabase, Signal/Matrix
 
 ## Getting Started
 
-- [ ] `getting-started/running-the-server.md` — Docker one-liner for local dev server
-- [ ] `getting-started/quickstart-python.md` — install → create space → post message → read it back
-- [ ] `getting-started/quickstart-typescript.md` — same flow in TypeScript
+- [x] `getting-started/running-the-server.md` — Docker Compose, GHCR image, dev config
+- [x] `getting-started/quickstart-python.md` — install → create space → post message → read it back
+- [x] `getting-started/quickstart-typescript.md` — same flow in TypeScript (Node + browser)
+
+## SDK Changes Made While Writing Docs
+
+- [x] Fixed stale `C` space ID prefix → `S` in `python-sdk/ARCHITECTURE.md`, `docs-internal/TYPED_IDENTIFIERS.md`, `typescript-sdk/src/index.ts`
+- [x] Added `Space.decryptMessageData(msg, topicId)` to TypeScript SDK (`client.ts`) to match Python SDK parity
 
 ## Core Concepts
 
