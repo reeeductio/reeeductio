@@ -9,11 +9,11 @@ Everything in rEEEductio lives inside a space: messages, files, structured state
 ```mermaid
 graph TD
     S["Space (S...)"]
-    S --> T["Topics\n(message chains)"]
-    S --> ST["State\n(event-sourced paths)"]
-    S --> B["Blobs\n(encrypted files)"]
-    S --> D["Data\n(key-value pairs)"]
-    S --> U["Members\n(users & tools)"]
+    S --> T["Topics (message chains)"]
+    S --> ST["State (event-sourced paths)"]
+    S --> B["Blobs (encrypted files)"]
+    S --> D["Data (key-value pairs)"]
+    S --> U["Members (users & tools)"]
 ```
 
 | Component | What it is | Typical use |
