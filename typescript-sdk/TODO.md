@@ -1,6 +1,6 @@
 1. ~~Add support for new OPAQUE endpoints~~
 2. ~~Set up workflow for publishing to npm~~
-3. Add user symmetric key
+3. ~~Add user symmetric key~~
    - Optional 32-byte `userSymmetricKey` constructor param (length-validated)
    - Derive `userMessageKey` / `userDataKey` via HKDF, domain-separated by `spaceId`
    - Build this like the Python and Swift SDKs: make the generic encrypted get/set

@@ -78,6 +78,14 @@ export class Space {
   /** Derived key for state encryption (32 bytes) */
   readonly stateKey: Uint8Array;
 
+  /** Optional 256-bit user-private key for encrypting data confidential against
+   * other space members. Null when no userSymmetricKey was provided. */
+  readonly userSymmetricKey: Uint8Array | null;
+  /** Derived key for user-private message encryption (32 bytes), or null */
+  readonly userMessageKey: Uint8Array | null;
+  /** Derived key for user-private data encryption (32 bytes), or null */
+  readonly userDataKey: Uint8Array | null;
+
   private fetchFn: typeof fetch;
   private localStore: MessageStore | null;
 
@@ -90,11 +98,18 @@ export class Space {
     /** Optional local message store for caching. When provided,
      * messages are cached locally and retrieved from cache when available. */
     localStore?: MessageStore;
+    /** Optional 256-bit (32-byte) user-private key for encrypting data that is
+     * confidential against other space members. When provided, used to derive
+     * userMessageKey and userDataKey for user-private encryption. */
+    userSymmetricKey?: Uint8Array;
   }) {
-    const { spaceId, keyPair, symmetricRoot, baseUrl = 'http://localhost:8000' } = options;
+    const { spaceId, keyPair, symmetricRoot, baseUrl = 'http://localhost:8000', userSymmetricKey } = options;
 
     if (symmetricRoot.length !== 32) {
       throw new Error(`symmetricRoot must be exactly 32 bytes, got ${symmetricRoot.length}`);
+    }
+    if (userSymmetricKey !== undefined && userSymmetricKey.length !== 32) {
+      throw new Error(`userSymmetricKey must be exactly 32 bytes, got ${userSymmetricKey.length}`);
     }
 
     this.spaceId = spaceId;
@@ -110,6 +125,18 @@ export class Space {
     this.dataKey = deriveKey(symmetricRoot, `data key | ${spaceId}`);
     // State key is a topic key for the "state" topic
     this.stateKey = deriveKey(this.messageKey, 'topic key | state');
+
+    // Derive user-private encryption keys if a userSymmetricKey was provided.
+    // These are confidential against other space members (including admins) because
+    // userSymmetricKey is not shared with the space.
+    this.userSymmetricKey = userSymmetricKey ?? null;
+    if (userSymmetricKey !== undefined) {
+      this.userMessageKey = deriveKey(userSymmetricKey, `user message key | ${spaceId}`);
+      this.userDataKey = deriveKey(userSymmetricKey, `user data key | ${spaceId}`);
+    } else {
+      this.userMessageKey = null;
+      this.userDataKey = null;
+    }
 
     // Create authentication session
     this.auth = new AuthSession(this.baseUrl, spaceId, keyPair, this.fetchFn);
@@ -661,13 +688,14 @@ export class Space {
    * Get encrypted data value at path and decrypt it.
    *
    * @param path - Data path
+   * @param key - Decryption key. Defaults to this.dataKey if not provided.
    * @returns Decrypted plaintext data bytes
    */
-  async getEncryptedData(path: string): Promise<Uint8Array> {
+  async getEncryptedData(path: string, key?: Uint8Array): Promise<Uint8Array> {
     const token = await this.auth.getToken();
     const entry = await getData(this.fetchFn, this.baseUrl, token, this.spaceId, path);
     const encryptedBytes = decodeBase64(entry.data);
-    return decryptAesGcm(encryptedBytes, this.dataKey);
+    return decryptAesGcm(encryptedBytes, key ?? this.dataKey);
   }
 
   /**
@@ -696,10 +724,11 @@ export class Space {
    *
    * @param path - Data path
    * @param data - Plaintext data bytes to encrypt and store
+   * @param key - Encryption key. Defaults to this.dataKey if not provided.
    * @returns DataSetResponse with path and timestamp
    */
-  async setEncryptedData(path: string, data: Uint8Array): Promise<DataSetResponse> {
-    const encryptedBytes = encryptAesGcm(data, this.dataKey);
+  async setEncryptedData(path: string, data: Uint8Array, key?: Uint8Array): Promise<DataSetResponse> {
+    const encryptedBytes = encryptAesGcm(data, key ?? this.dataKey);
     const token = await this.auth.getToken();
     return setData(
       this.fetchFn,
@@ -711,6 +740,41 @@ export class Space {
       this.getUserId(),
       this.keyPair.privateKey
     );
+  }
+
+  /**
+   * Get user-private encrypted data at a path relative to this user's namespace.
+   *
+   * Reads from `user/{userId}/{path}` and decrypts with this.userDataKey, which
+   * is confidential against other space members and the server.
+   *
+   * @param path - Relative data path (e.g., "notes", "settings/theme")
+   * @returns Decrypted plaintext data bytes
+   * @throws Error if no userSymmetricKey was provided to the Space constructor
+   */
+  async getEncryptedUserData(path: string): Promise<Uint8Array> {
+    if (this.userDataKey === null) {
+      throw new Error('userSymmetricKey is required for user-private encryption');
+    }
+    return this.getEncryptedData(`user/${this.getUserId()}/${path}`, this.userDataKey);
+  }
+
+  /**
+   * Store user-private encrypted data at a path relative to this user's namespace.
+   *
+   * Encrypts with this.userDataKey (confidential against other space members and
+   * the server) and stores at `user/{userId}/{path}`.
+   *
+   * @param path - Relative data path (e.g., "notes", "settings/theme")
+   * @param data - Plaintext data bytes to encrypt and store
+   * @returns DataSetResponse with path and timestamp
+   * @throws Error if no userSymmetricKey was provided to the Space constructor
+   */
+  async setEncryptedUserData(path: string, data: Uint8Array): Promise<DataSetResponse> {
+    if (this.userDataKey === null) {
+      throw new Error('userSymmetricKey is required for user-private encryption');
+    }
+    return this.setEncryptedData(`user/${this.getUserId()}/${path}`, data, this.userDataKey);
   }
 
   // ============================================================
