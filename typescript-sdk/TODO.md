@@ -9,8 +9,9 @@
    - `getEncryptedUserData` / `setEncryptedUserData` for `user/{memberId}/{path}`
      (confidential against other space members and the server)
 4. Make symmetric keys optional, for admin tools (also TODO in the Python SDK)
-5. Add `createInvitation` — generate keypair, create invitation tool, grant
-   `can_create_user` + `can_grant_user_role` (see Python `create_invitation`)
+5. ~~Add `createInvitation`~~
+   — create invitation tool
+   - grant `can_create_user` + `can_grant_user_role` (see Python `create_invitation`)
 6. Add `createSpace` on the admin client — register a new space in the admin space
    (derive space_id, write registration with space_signature, index under the user)
 7. Finish WebSocket streaming — currently only the URL helpers and

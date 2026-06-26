@@ -3,6 +3,7 @@ import { Space, AdminClient } from '../client.js';
 import {
   generateKeyPair,
   toSpaceId,
+  toToolId,
   toUserId,
   encodeBase64,
   decodeBase64,
@@ -376,6 +377,77 @@ describe('Space', () => {
 
       expect(wsUrl).toContain('wss://api.example.com');
       expect(wsUrl).toContain('token=mock-token');
+    });
+  });
+
+  describe('createInvitation', () => {
+    it('creates an invitation tool and grants the user capabilities', async () => {
+      const keyPair = await generateKeyPair();
+      const spaceId = toSpaceId(keyPair.publicKey);
+      const symmetricRoot = new Uint8Array(32).fill(42);
+
+      const space = new Space({
+        spaceId, keyPair, symmetricRoot, baseUrl: 'https://api.example.com', fetch: mockFetch,
+      });
+
+      const inviteKeyPair = await generateKeyPair();
+      const toolId = toToolId(inviteKeyPair.publicKey);
+
+      const createToolSpy = vi
+        .spyOn(space, 'createTool')
+        .mockResolvedValue({
+          tool: { tool_id: toolId, description: 'Invite for Alice' },
+          keyPair: inviteKeyPair,
+        });
+      const grantSpy = vi
+        .spyOn(space, 'grantCapabilityToTool')
+        .mockResolvedValue({ message_hash: 'hash', server_timestamp: 1 } as never);
+
+      const result = await space.createInvitation('Invite for Alice');
+
+      // Returns the keypair produced for the invitation tool
+      expect(result).toBe(inviteKeyPair);
+
+      // Creates the tool with the given description
+      expect(createToolSpy).toHaveBeenCalledTimes(1);
+      expect(createToolSpy).toHaveBeenCalledWith('Invite for Alice');
+
+      // Grants both capabilities with the exact ids and paths
+      expect(grantSpy).toHaveBeenCalledTimes(2);
+      expect(grantSpy).toHaveBeenNthCalledWith(1, toolId, 'can_create_user', {
+        op: 'create',
+        path: 'state/auth/users/{any}',
+      });
+      expect(grantSpy).toHaveBeenNthCalledWith(2, toolId, 'can_grant_user_role', {
+        op: 'create',
+        path: 'state/auth/users/{any}/roles/user',
+      });
+    });
+
+    it('defaults the description to an empty string when omitted', async () => {
+      const keyPair = await generateKeyPair();
+      const spaceId = toSpaceId(keyPair.publicKey);
+      const symmetricRoot = new Uint8Array(32).fill(42);
+
+      const space = new Space({
+        spaceId, keyPair, symmetricRoot, baseUrl: 'https://api.example.com', fetch: mockFetch,
+      });
+
+      const inviteKeyPair = await generateKeyPair();
+      const toolId = toToolId(inviteKeyPair.publicKey);
+
+      const createToolSpy = vi
+        .spyOn(space, 'createTool')
+        .mockResolvedValue({
+          tool: { tool_id: toolId, description: '' },
+          keyPair: inviteKeyPair,
+        });
+      vi.spyOn(space, 'grantCapabilityToTool')
+        .mockResolvedValue({ message_hash: 'hash', server_timestamp: 1 } as never);
+
+      await space.createInvitation();
+
+      expect(createToolSpy).toHaveBeenCalledWith('');
     });
   });
 });

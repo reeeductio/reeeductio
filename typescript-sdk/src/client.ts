@@ -985,6 +985,38 @@ export class Space {
   }
 
   /**
+   * Create an invitation tool that can add a new user to the space.
+   *
+   * Creates a tool entry with a fresh keypair and grants it the capabilities
+   * to create a user and assign them the "user" role. The recipient uses the
+   * returned keypair to authenticate and add themselves to the space.
+   *
+   * @param description - Optional human-readable description of the invitation
+   * @returns The KeyPair for the invitation tool
+   *
+   * @example
+   * ```typescript
+   * const keyPair = await space.createInvitation('Invite for Alice');
+   * // Send keyPair to the recipient so they can join the space
+   * ```
+   */
+  async createInvitation(description?: string): Promise<KeyPair> {
+    const { tool, keyPair } = await this.createTool(description ?? '');
+    const toolId = tool.tool_id;
+
+    await this.grantCapabilityToTool(toolId, 'can_create_user', {
+      op: 'create',
+      path: 'state/auth/users/{any}',
+    });
+    await this.grantCapabilityToTool(toolId, 'can_grant_user_role', {
+      op: 'create',
+      path: 'state/auth/users/{any}/roles/user',
+    });
+
+    return keyPair;
+  }
+
+  /**
    * Grant a capability to a user.
    *
    * Capabilities define what operations a user can perform. Users can also
