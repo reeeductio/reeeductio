@@ -33,6 +33,18 @@ export class AuthSession {
   private token: string | null = null;
   private tokenExpiresAt: number | null = null;
 
+  /**
+   * In-flight authentication / refresh, shared by all concurrent callers.
+   *
+   * The server stores exactly one outstanding challenge per member, so a
+   * second concurrent `authenticate()` overwrites the first one's challenge
+   * and the loser's `/auth/verify` fails with a 401 that is indistinguishable
+   * from genuinely bad credentials. Concurrent callers therefore join the
+   * attempt already running instead of starting their own.
+   */
+  private authInFlight: Promise<TokenResponse> | null = null;
+  private refreshInFlight: Promise<TokenResponse> | null = null;
+
   /** Refresh token before this many milliseconds of expiry */
   private readonly refreshBuffer: number = 60_000; // 1 minute
 
@@ -98,6 +110,16 @@ export class AuthSession {
    * Perform full challenge-response authentication.
    */
   async authenticate(): Promise<TokenResponse> {
+    // Join an attempt already in flight — see `authInFlight`.
+    if (!this.authInFlight) {
+      this.authInFlight = this.doAuthenticate().finally(() => {
+        this.authInFlight = null;
+      });
+    }
+    return this.authInFlight;
+  }
+
+  private async doAuthenticate(): Promise<TokenResponse> {
     // Step 1: Request challenge
     const userId = this.getUserId();
     infoLog('auth', 'Authenticating', { spaceId: this.spaceId, userId });
@@ -129,6 +151,17 @@ export class AuthSession {
    * Refresh the current token.
    */
   async refresh(): Promise<TokenResponse> {
+    // Deduped for the same reason as `authenticate()`: several requests
+    // noticing the same expiring token must not each burn a refresh.
+    if (!this.refreshInFlight) {
+      this.refreshInFlight = this.doRefresh().finally(() => {
+        this.refreshInFlight = null;
+      });
+    }
+    return this.refreshInFlight;
+  }
+
+  private async doRefresh(): Promise<TokenResponse> {
     if (!this.token) {
       throw new AuthenticationError('No token to refresh');
     }
@@ -247,6 +280,9 @@ export class AdminAuthSession {
   private tokenExpiresAt: number | null = null;
   private adminSpaceId: string | null = null;
 
+  /** In-flight authentication shared by concurrent callers — see AuthSession. */
+  private authInFlight: Promise<TokenResponse> | null = null;
+
   private readonly refreshBuffer: number = 60_000;
 
   constructor(baseUrl: string, keyPair: KeyPair, fetchFn: typeof fetch = fetch) {
@@ -300,6 +336,16 @@ export class AdminAuthSession {
    * Perform admin authentication.
    */
   async authenticate(): Promise<TokenResponse> {
+    // Join an attempt already in flight — see `authInFlight`.
+    if (!this.authInFlight) {
+      this.authInFlight = this.doAuthenticate().finally(() => {
+        this.authInFlight = null;
+      });
+    }
+    return this.authInFlight;
+  }
+
+  private async doAuthenticate(): Promise<TokenResponse> {
     const userId = this.getUserId();
 
     // Request challenge

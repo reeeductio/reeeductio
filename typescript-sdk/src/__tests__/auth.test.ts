@@ -132,6 +132,124 @@ describe('AuthSession', () => {
     });
   });
 
+  describe('concurrent authentication', () => {
+    /**
+     * The server keeps one outstanding challenge per member, so a second
+     * concurrent flow invalidates the first and the loser's verify comes back
+     * 401 — which looks exactly like bad credentials. Concurrent callers must
+     * share a single challenge/verify round trip.
+     */
+    const mockChallengeThenVerify = (fetchMock: ReturnType<typeof vi.fn>) => {
+      const challengeBase64 = encodeBase64(new Uint8Array(32).fill(1));
+      fetchMock.mockImplementation(async (url: string) => {
+        if (url.endsWith('/auth/challenge')) {
+          return { ok: true, json: async () => ({ challenge: challengeBase64 }) };
+        }
+        return {
+          ok: true,
+          json: async () => ({ token: 'mock-jwt-token', expires_at: Date.now() + 3600000 }),
+        };
+      });
+    };
+
+    it('should issue only one challenge for concurrent authenticate() calls', async () => {
+      const keyPair = await generateKeyPair();
+      const spaceId = toSpaceId(keyPair.publicKey);
+      mockChallengeThenVerify(mockFetch);
+
+      const session = new AuthSession(mockBaseUrl, spaceId, keyPair, mockFetch);
+
+      const results = await Promise.all([
+        session.authenticate(),
+        session.authenticate(),
+        session.authenticate(),
+      ]);
+
+      for (const result of results) {
+        expect(result.token).toBe('mock-jwt-token');
+      }
+      const challengeCalls = mockFetch.mock.calls.filter(([url]) =>
+        String(url).endsWith('/auth/challenge')
+      );
+      expect(challengeCalls).toHaveLength(1);
+      expect(mockFetch).toHaveBeenCalledTimes(2); // one challenge + one verify
+    });
+
+    it('should issue only one challenge for concurrent getToken() calls', async () => {
+      const keyPair = await generateKeyPair();
+      const spaceId = toSpaceId(keyPair.publicKey);
+      mockChallengeThenVerify(mockFetch);
+
+      const session = new AuthSession(mockBaseUrl, spaceId, keyPair, mockFetch);
+
+      const tokens = await Promise.all([
+        session.getToken(),
+        session.getToken(),
+        session.getToken(),
+      ]);
+
+      expect(tokens).toEqual(['mock-jwt-token', 'mock-jwt-token', 'mock-jwt-token']);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('should allow a fresh attempt after a failed one', async () => {
+      const keyPair = await generateKeyPair();
+      const spaceId = toSpaceId(keyPair.publicKey);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: 'Unauthorized' }),
+      });
+
+      const session = new AuthSession(mockBaseUrl, spaceId, keyPair, mockFetch);
+      await expect(session.authenticate()).rejects.toThrow();
+
+      // The failed attempt must not be cached and replayed forever.
+      mockChallengeThenVerify(mockFetch);
+      const result = await session.authenticate();
+      expect(result.token).toBe('mock-jwt-token');
+    });
+
+    it('should refresh only once for concurrent getToken() calls', async () => {
+      const keyPair = await generateKeyPair();
+      const spaceId = toSpaceId(keyPair.publicKey);
+      mockChallengeThenVerify(mockFetch);
+
+      const session = new AuthSession(mockBaseUrl, spaceId, keyPair, mockFetch);
+      // Authenticate with a token that is already inside the refresh buffer.
+      mockFetch.mockImplementation(async (url: string) => {
+        if (String(url).endsWith('/auth/challenge')) {
+          return { ok: true, json: async () => ({ challenge: encodeBase64(new Uint8Array(32).fill(1)) }) };
+        }
+        return {
+          ok: true,
+          json: async () => ({ token: 'expiring-token', expires_at: Date.now() + 1000 }),
+        };
+      });
+      await session.authenticate();
+
+      mockFetch.mockClear();
+      mockFetch.mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ token: 'refreshed-token', expires_at: Date.now() + 3600000 }),
+      }));
+
+      const tokens = await Promise.all([
+        session.getToken(),
+        session.getToken(),
+        session.getToken(),
+      ]);
+
+      expect(tokens).toEqual(['refreshed-token', 'refreshed-token', 'refreshed-token']);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${mockBaseUrl}/spaces/${spaceId}/auth/refresh`,
+        expect.objectContaining({ method: 'POST' })
+      );
+    });
+  });
+
   describe('getToken', () => {
     it('should return token after authentication', async () => {
       const keyPair = await generateKeyPair();
