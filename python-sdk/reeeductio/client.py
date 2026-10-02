@@ -7,8 +7,10 @@ authentication, messages, state, blobs, and data.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import threading
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -1442,6 +1444,10 @@ class AdminClient:
         self._token_expires_at: int | None = None
         self._client: httpx.Client | None = None
 
+        # The server keeps one outstanding challenge per member, so concurrent
+        # handshakes would invalidate each other. See AuthSession.
+        self._auth_lock = threading.Lock()
+
     def __enter__(self):
         """Context manager entry."""
         return self
@@ -1480,12 +1486,20 @@ class AdminClient:
         """
         Perform challenge-response authentication against the admin space.
 
+        Concurrent callers are serialized so they cannot invalidate each
+        other's challenge.
+
         Returns:
             JWT bearer token
 
         Raises:
             AuthenticationError: If authentication fails
         """
+        with self._auth_lock:
+            return self._authenticate_locked()
+
+    def _authenticate_locked(self) -> str:
+        """Run the admin handshake. Caller must hold ``_auth_lock``."""
         from .crypto import encode_base64, sign_data
         from .exceptions import AuthenticationError
 
@@ -1543,7 +1557,12 @@ class AdminClient:
         if self.is_authenticated and self._token is not None:
             return self._token
 
-        return self.authenticate()
+        with self._auth_lock:
+            # A concurrent caller may have authenticated while we waited.
+            if self.is_authenticated and self._token is not None:
+                return self._token
+
+            return self._authenticate_locked()
 
     @property
     def client(self) -> httpx.Client:
@@ -1663,6 +1682,16 @@ class AsyncAdminClient:
         self._token_expires_at: int | None = None
         self._client: httpx.AsyncClient | None = None
 
+        # Created lazily so the client is not bound to an event loop at
+        # construction time. See `_get_auth_lock`.
+        self._auth_lock: asyncio.Lock | None = None
+
+    def _get_auth_lock(self) -> asyncio.Lock:
+        """Get the auth lock, creating it on first use."""
+        if self._auth_lock is None:
+            self._auth_lock = asyncio.Lock()
+        return self._auth_lock
+
     async def __aenter__(self):
         """Async context manager entry."""
         return self
@@ -1700,12 +1729,20 @@ class AsyncAdminClient:
         """
         Perform challenge-response authentication against the admin space.
 
+        Concurrent callers are serialized so they cannot invalidate each
+        other's challenge.
+
         Returns:
             JWT bearer token
 
         Raises:
             AuthenticationError: If authentication fails
         """
+        async with self._get_auth_lock():
+            return await self._authenticate_locked()
+
+    async def _authenticate_locked(self) -> str:
+        """Run the admin handshake. Caller must hold the auth lock."""
         from .crypto import encode_base64, sign_data
         from .exceptions import AuthenticationError
 
@@ -1754,7 +1791,12 @@ class AsyncAdminClient:
         if self.is_authenticated and self._token is not None:
             return self._token
 
-        return await self.authenticate()
+        async with self._get_auth_lock():
+            # A concurrent caller may have authenticated while we waited.
+            if self.is_authenticated and self._token is not None:
+                return self._token
+
+            return await self._authenticate_locked()
 
     async def get_client(self) -> httpx.AsyncClient:
         """

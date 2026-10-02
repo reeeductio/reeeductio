@@ -4,6 +4,8 @@ Authentication helpers for reeeductio spaces.
 Handles the challenge-response authentication flow using httpx.
 """
 
+import asyncio
+import threading
 from datetime import datetime, timezone
 
 import httpx
@@ -44,6 +46,9 @@ class AuthSession:
         self._token: str | None = None
         self._token_expires_at: int | None = None
 
+        # Serializes challenge/verify and refresh flows across threads.
+        self._lock = threading.Lock()
+
     @property
     def token(self) -> str | None:
         """Get current JWT token."""
@@ -66,12 +71,20 @@ class AuthSession:
         """
         Perform challenge-response authentication.
 
+        Concurrent callers are serialized so they cannot invalidate each
+        other's challenge.
+
         Returns:
             JWT bearer token
 
         Raises:
             AuthenticationError: If authentication fails
         """
+        with self._lock:
+            return self._authenticate_locked()
+
+    def _authenticate_locked(self) -> str:
+        """Run the challenge/verify handshake. Caller must hold ``_lock``."""
         with httpx.Client(base_url=self.base_url) as client:
             # Step 1: Request challenge
             try:
@@ -125,12 +138,20 @@ class AuthSession:
         """
         Refresh the current JWT token.
 
+        Concurrent callers are serialized so a single expiring token does not
+        burn several refreshes.
+
         Returns:
             New JWT bearer token
 
         Raises:
             AuthenticationError: If refresh fails or no token exists
         """
+        with self._lock:
+            return self._refresh_token_locked()
+
+    def _refresh_token_locked(self) -> str:
+        """Refresh the token. Caller must hold ``_lock``."""
         if not self._token:
             raise AuthenticationError("No token to refresh. Call authenticate() first.")
 
@@ -170,16 +191,22 @@ class AuthSession:
         if self.is_authenticated:
             return self._token  # type: ignore
 
-        # Try to refresh if we have a token
-        if self._token:
-            try:
-                return self.refresh_token()
-            except AuthenticationError:
-                # Fall through to re-authenticate
-                pass
+        with self._lock:
+            # A concurrent caller may have finished the handshake while we
+            # waited for the lock; reuse its token instead of starting our own.
+            if self.is_authenticated:
+                return self._token  # type: ignore
 
-        # Full re-authentication
-        return self.authenticate()
+            # Try to refresh if we have a token
+            if self._token:
+                try:
+                    return self._refresh_token_locked()
+                except AuthenticationError:
+                    # Fall through to re-authenticate
+                    pass
+
+            # Full re-authentication
+            return self._authenticate_locked()
 
 
 class AsyncAuthSession:
@@ -213,6 +240,23 @@ class AsyncAuthSession:
         self._token: str | None = None
         self._token_expires_at: int | None = None
 
+        # Created lazily so the session is not bound to an event loop at
+        # construction time. See `_get_lock`.
+        self._lock: asyncio.Lock | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        """
+        Get the per-session lock, creating it on first use.
+
+        Building it here rather than in `__init__` keeps the session usable
+        when it is constructed outside a running loop. This is safe because
+        there is no await between the check and the assignment, so concurrent
+        coroutines on the same loop cannot both create one.
+        """
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
     @property
     def token(self) -> str | None:
         """Get current JWT token."""
@@ -235,12 +279,20 @@ class AsyncAuthSession:
         """
         Perform challenge-response authentication.
 
+        Concurrent callers are serialized so they cannot invalidate each
+        other's challenge.
+
         Returns:
             JWT bearer token
 
         Raises:
             AuthenticationError: If authentication fails
         """
+        async with self._get_lock():
+            return await self._authenticate_locked()
+
+    async def _authenticate_locked(self) -> str:
+        """Run the challenge/verify handshake. Caller must hold the lock."""
         async with httpx.AsyncClient(base_url=self.base_url) as client:
             # Step 1: Request challenge
             try:
@@ -294,12 +346,20 @@ class AsyncAuthSession:
         """
         Refresh the current JWT token.
 
+        Concurrent callers are serialized so a single expiring token does not
+        burn several refreshes.
+
         Returns:
             New JWT bearer token
 
         Raises:
             AuthenticationError: If refresh fails or no token exists
         """
+        async with self._get_lock():
+            return await self._refresh_token_locked()
+
+    async def _refresh_token_locked(self) -> str:
+        """Refresh the token. Caller must hold the lock."""
         if not self._token:
             raise AuthenticationError("No token to refresh. Call authenticate() first.")
 
@@ -339,13 +399,19 @@ class AsyncAuthSession:
         if self.is_authenticated:
             return self._token  # type: ignore
 
-        # Try to refresh if we have a token
-        if self._token:
-            try:
-                return await self.refresh_token()
-            except AuthenticationError:
-                # Fall through to re-authenticate
-                pass
+        async with self._get_lock():
+            # A concurrent caller may have finished the handshake while we
+            # waited for the lock; reuse its token instead of starting our own.
+            if self.is_authenticated:
+                return self._token  # type: ignore
 
-        # Full re-authentication
-        return await self.authenticate()
+            # Try to refresh if we have a token
+            if self._token:
+                try:
+                    return await self._refresh_token_locked()
+                except AuthenticationError:
+                    # Fall through to re-authenticate
+                    pass
+
+            # Full re-authentication
+            return await self._authenticate_locked()
